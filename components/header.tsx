@@ -1,8 +1,7 @@
-"use client"
+"use client";
 
-import { Button } from "@/components/ui/button"
-import Link from "next/link"
-import { Waves } from "lucide-react"
+import { Button } from "@/components/ui/button";
+import Link from "next/link";
 
 export default function Header() {
   return (
@@ -10,9 +9,11 @@ export default function Header() {
       <div className="container flex h-16 items-center justify-between mx-auto px-4 md:px-6">
         <Link href="/" className="flex items-center gap-2">
           <div className="w-8 h-8 bg-gradient-to-br from-teal-500 to-teal-600 rounded-lg flex items-center justify-center">
-            <Waves className="w-5 h-5 text-white" />
+            <img src="/icon-large.png" alt="Jaga Kali" className="w-6 h-auto" />
           </div>
-          <span className="text-xl font-bold text-foreground hidden sm:inline">Jaga Kali</span>
+          <span className="text-xl font-bold text-foreground hidden sm:inline">
+            Jaga Kali
+          </span>
         </Link>
 
         <nav className="hidden md:flex items-center gap-8">
@@ -49,11 +50,14 @@ export default function Header() {
         </nav>
 
         <Link href="/lapor">
-          <Button size="sm" className="bg-teal-600 hover:bg-teal-700 text-white">
+          <Button
+            size="sm"
+            className="bg-teal-600 hover:bg-teal-700 text-white"
+          >
             Laporkan
           </Button>
         </Link>
       </div>
     </header>
-  )
+  );
 }
