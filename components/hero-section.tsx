@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { AlertTriangle, MapPin } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import CountUp from "react-countup";
 async function fetchStats() {
   try {
     const response = await fetch("/api/reports");
@@ -100,7 +101,7 @@ export default function HeroSection() {
             {statItems.map((item, index) => (
               <div key={index} className="flex flex-col items-center gap-2">
                 <div className={`text-3xl font-bold ${item.color}`}>
-                  {item.value}
+                  <CountUp start={0} end={item.value} duration={5} />
                 </div>
                 <p className="text-xs text-muted-foreground">{item.label}</p>
               </div>
