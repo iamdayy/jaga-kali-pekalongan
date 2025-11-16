@@ -141,3 +141,6 @@
 .leaflet-control-zoom-out {
   @apply font-bold text-lg;
 }
+.leaflet-pane {
+  z-index: 0 !important;
+}

@@ -19,13 +19,7 @@ const MapContainer = dynamic(() => import("@/components/map-container"), {
   ),
 });
 export default function MapPage() {
-  const [showReportModal, setShowReportModal] = useState(false);
   const [refreshMap, setRefreshMap] = useState(false);
-
-  const handleReportSuccess = () => {
-    setShowReportModal(false);
-    setRefreshMap(!refreshMap);
-  };
 
   return (
     <div className="flex flex-col h-screen bg-background">

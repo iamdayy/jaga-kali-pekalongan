@@ -4,6 +4,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Loader } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import ReportFormModal from "./report-form-modal";
 
 interface Report {
   id: string;
@@ -28,25 +29,31 @@ const severityColors: Record<string, string> = {
 };
 
 export default function MapContainer() {
+  const [latitude, setLatitude] = useState(-6.8902);
+  const [longitude, setLongitude] = useState(109.6809);
+  const [latitudeForModal, setLatitudeForModal] = useState<number | null>(null);
+  const [longitudeForModal, setLongitudeForModal] = useState<number | null>(
+    null
+  );
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<L.Marker[]>([]);
   const [loading, setLoading] = useState(true);
   const [reports, setReports] = useState<Report[]>([]);
+  const [modalOpen, setModalOpen] = useState(false);
 
+  const fetchReports = async () => {
+    try {
+      const response = await fetch("/api/reports");
+      const data = await response.json();
+      setReports(data);
+      setLoading(false);
+    } catch (error) {
+      console.error("Failed to fetch reports:", error);
+      setLoading(false);
+    }
+  };
   useEffect(() => {
-    const fetchReports = async () => {
-      try {
-        const response = await fetch("/api/reports");
-        const data = await response.json();
-        setReports(data);
-        setLoading(false);
-      } catch (error) {
-        console.error("Failed to fetch reports:", error);
-        setLoading(false);
-      }
-    };
-
     fetchReports();
   }, []);
 
@@ -55,7 +62,7 @@ export default function MapContainer() {
 
     // Initialize map
     const map = L.map(containerRef.current).setView(
-      [-6.8902, 109.6809], // Pekalongan River center
+      [latitude, longitude], // Pekalongan River center
       12
     );
 
@@ -67,10 +74,41 @@ export default function MapContainer() {
 
     mapRef.current = map;
 
+    map.on("click", (e) => {
+      const { lat, lng } = e.latlng;
+      setLatitudeForModal(lat);
+      setLongitudeForModal(lng);
+      setModalOpen(true);
+    });
+
     return () => {
       map.remove();
       mapRef.current = null;
     };
+  }, [latitude, longitude]);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          mapRef.current?.setView(
+            [position.coords.latitude, position.coords.longitude],
+            19
+          );
+
+          const marker = L.marker([
+            position.coords.latitude,
+            position.coords.longitude,
+          ]).addTo(mapRef.current!);
+          markersRef.current.push(marker);
+        },
+        (error) => {
+          console.error("Error getting location:", error);
+        }
+      );
+    }
   }, []);
 
   useEffect(() => {
@@ -135,6 +173,22 @@ export default function MapContainer() {
           </div>
         </div>
       )}
+      <ReportFormModal
+        isOpen={modalOpen}
+        longitude={longitudeForModal}
+        latitude={latitudeForModal}
+        onClose={() => {
+          setModalOpen(false);
+          setLatitudeForModal(null);
+          setLongitudeForModal(null);
+        }}
+        onSuccess={() => {
+          fetchReports();
+          setModalOpen(false);
+          setLatitudeForModal(null);
+          setLongitudeForModal(null);
+        }}
+      />
     </div>
   );
 }
