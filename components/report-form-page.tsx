@@ -11,13 +11,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import * as tf from "@tensorflow/tfjs";
+import "@tensorflow/tfjs-backend-cpu"; // Wajib: backend cadangan
+import "@tensorflow/tfjs-backend-webgl"; // Wajib: backend untuk browser modern
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { ImageIcon, Loader, MapPin, X } from "lucide-react";
 import Link from "next/link";
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
-
 interface FormData {
   title: string;
   description: string;
@@ -33,6 +35,24 @@ interface FormData {
   image_urls: string[];
 }
 
+interface categorySuggestion {
+  label: string;
+  score: number;
+}
+const CLASSES = [
+  "Battery",
+  "Biological",
+  "Brown-Glass",
+  "Cardboard",
+  "Clothes",
+  "Green-Glass",
+  "Metal",
+  "Paper",
+  "Plastic",
+  "Shoes",
+  "Trash",
+  "White-Glass",
+];
 interface ReportFormPageProps {
   onSuccess: (reportId: string) => void;
 }
@@ -63,6 +83,28 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const markerRef = useRef<L.Marker | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [model, setModel] = useState<tf.LayersModel | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [aiTags, setAiTags] = useState<string[]>([]);
+  const [categorySuggestion, setCategorySuggestion] = useState<
+    categorySuggestion[]
+  >([]);
+
+  // Load model saat komponen pertama kali dibuka
+  useEffect(() => {
+    const loadModel = async () => {
+      try {
+        console.log("Memuat model AI...");
+        const loadedModel = await tf.loadLayersModel("/model/model.json");
+        setModel(loadedModel);
+        console.log("Model AI siap!");
+      } catch (err) {
+        console.error("Gagal memuat model AI:", err);
+      }
+    };
+    loadModel();
+  }, []);
 
   useEffect(() => {
     if (formData.latitude && formData.longitude) {
@@ -152,6 +194,67 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
       ...prev,
       image_urls: prev.image_urls.filter((_, i) => i !== index),
     }));
+  };
+
+  const analyzeImage = async (file: File) => {
+    if (!model) return;
+    setIsAnalyzing(true);
+
+    // Buat URL preview
+    const objectUrl = URL.createObjectURL(file);
+    setImagePreview((prev) => [...prev, objectUrl]);
+
+    try {
+      const imgElement = document.createElement("img");
+      imgElement.src = objectUrl;
+
+      imgElement.onload = async () => {
+        // --- PRE-PROCESSING (Wajib sama persis dengan Training di Kaggle) ---
+
+        // 1. Ubah gambar ke Tensor
+        let tensor = tf.browser.fromPixels(imgElement);
+
+        // 2. Resize ke 224x224 (Ukuran MobileNetV2)
+        tensor = tf.image.resizeBilinear(tensor, [224, 224]);
+
+        // 3. Normalisasi (Ubah nilai pixel 0-255 jadi 0-1)
+        // Ini SANGAT PENTING karena kita pakai rescale=1./255 saat training
+        tensor = tensor.div(255.0);
+
+        // 4. Tambah dimensi batch (karena model minta input [1, 224, 224, 3])
+        tensor = tensor.expandDims(0);
+
+        // --- PREDIKSI ---
+        const prediction = model.predict(tensor) as tf.Tensor;
+        const values = await prediction.data(); // Dapat array probabilitas (misal: [0.1, 0.8, ...])
+
+        // Pasangkan nilai dengan nama kelas
+        const classesWithScore = Array.from(values).map((value, index) => ({
+          label: CLASSES[index],
+          score: value,
+        }));
+        console.log("Hasil prediksi AI:", classesWithScore);
+
+        // Urutkan dari yang skornya tertinggi
+        const sortedResults = classesWithScore
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 3) // Ambil Top 3 saja
+          .map((item) => ({
+            label: item.label,
+            score: Math.round(item.score * 100), // Jadikan persen
+          }));
+
+        setCategorySuggestion(sortedResults);
+
+        // Bersihkan memori tensor (Penting agar browser tidak berat!)
+        tf.dispose(tensor);
+
+        setIsAnalyzing(false);
+      };
+    } catch (error) {
+      console.error("Analisis gagal:", error);
+      setIsAnalyzing(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -390,7 +493,13 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
             multiple
             accept="image/*"
             className="hidden"
-            onChange={handlePhotoUpload}
+            onChange={(e) => {
+              handlePhotoUpload(e);
+              const files = e.target.files;
+              if (files && files[0]) {
+                analyzeImage(files[0]);
+              }
+            }}
             disabled={imagePreview.length >= 3}
           />
 
@@ -410,6 +519,24 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
                   >
                     <X className="w-3 h-3" />
                   </button>
+                  {isAnalyzing && (
+                    <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
+                      <Loader className="w-6 h-6 text-white animate-spin" />
+                    </div>
+                  )}
+                  {aiTags.length > 0 && !isAnalyzing && (
+                    <div className="absolute bottom-1 left-1 bg-teal-600 text-white text-xs px-2 py-1 rounded">
+                      AI Tags: {aiTags.join(", ")}
+                    </div>
+                  )}
+                  {categorySuggestion.length > 0 && !isAnalyzing && (
+                    <div className="absolute bottom-1 right-1 bg-blue-600 text-white text-xs px-2 py-1 rounded">
+                      Category Suggestion:{" "}
+                      {categorySuggestion
+                        .map((cat) => `${cat.label} (${cat.score})`)
+                        .join(", ")}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
