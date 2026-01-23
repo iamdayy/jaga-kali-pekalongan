@@ -4,16 +4,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import * as tf from "@tensorflow/tfjs";
-import "@tensorflow/tfjs-backend-cpu"; // Wajib: backend cadangan
-import "@tensorflow/tfjs-backend-webgl"; // Wajib: backend untuk browser modern
+import { useImageClassifier } from "@/hooks/use-image-classifier";
+import { uploadImage } from "@/lib/upload-image";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { ImageIcon, Loader, MapPin, X } from "lucide-react";
@@ -35,27 +34,11 @@ interface FormData {
   image_urls: string[];
 }
 
-interface categorySuggestion {
-  label: string;
-  score: number;
-}
-const CLASSES = [
-  "Battery",
-  "Biological",
-  "Brown-Glass",
-  "Cardboard",
-  "Clothes",
-  "Green-Glass",
-  "Metal",
-  "Paper",
-  "Plastic",
-  "Shoes",
-  "Trash",
-  "White-Glass",
-];
 interface ReportFormPageProps {
   onSuccess: (reportId: string) => void;
 }
+
+
 export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
   const [formData, setFormData] = useState<FormData>({
     title: "",
@@ -78,33 +61,15 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
   const [successReportId, setSuccessReportId] = useState<string | null>(null);
   const [showMap, setShowMap] = useState(false);
   const [imagePreview, setImagePreview] = useState<string[]>([]);
+  const [filesToUpload, setFilesToUpload] = useState<File[]>([]);
   const [address, setAddress] = useState("Pilih lokasi di peta");
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markerRef = useRef<L.Marker | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [model, setModel] = useState<tf.LayersModel | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const { isAnalyzing, categorySuggestion, analyzeImage } = useImageClassifier();
   const [aiTags, setAiTags] = useState<string[]>([]);
-  const [categorySuggestion, setCategorySuggestion] = useState<
-    categorySuggestion[]
-  >([]);
-
-  // Load model saat komponen pertama kali dibuka
-  useEffect(() => {
-    const loadModel = async () => {
-      try {
-        console.log("Memuat model AI...");
-        const loadedModel = await tf.loadLayersModel("/model/model.json");
-        setModel(loadedModel);
-        console.log("Model AI siap!");
-      } catch (err) {
-        console.error("Gagal memuat model AI:", err);
-      }
-    };
-    loadModel();
-  }, []);
 
   useEffect(() => {
     if (formData.latitude && formData.longitude) {
@@ -173,16 +138,16 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
     if (!files) return;
 
     Array.from(files).forEach((file) => {
+      // Simpan file asli untuk diupload nanti
+      setFilesToUpload((prev) => [...prev, file]);
+
       const reader = new FileReader();
       reader.onload = (event) => {
         const base64 = event.target?.result as string;
         setImagePreview((prev) => [...prev, base64]);
-        // In production, upload to Vercel Blob here
-        // For now, we'll store as base64 - ready for Blob integration
-        setFormData((prev) => ({
-          ...prev,
-          image_urls: [...prev.image_urls, base64],
-        }));
+        
+        // JANGAN simpan base64 ke formData.image_urls
+        // Kita akan isi image_urls dengan URL dari Supabase setelah upload berhasil
       };
       reader.readAsDataURL(file);
     });
@@ -190,70 +155,55 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
 
   const removeImage = (index: number) => {
     setImagePreview((prev) => prev.filter((_, i) => i !== index));
-    setFormData((prev) => ({
-      ...prev,
-      image_urls: prev.image_urls.filter((_, i) => i !== index),
-    }));
+    setFilesToUpload((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const analyzeImage = async (file: File) => {
-    if (!model) return;
-    setIsAnalyzing(true);
-
-    // Buat URL preview
-    const objectUrl = URL.createObjectURL(file);
-    setImagePreview((prev) => [...prev, objectUrl]);
-
-    try {
-      const imgElement = document.createElement("img");
-      imgElement.src = objectUrl;
-
-      imgElement.onload = async () => {
-        // --- PRE-PROCESSING (Wajib sama persis dengan Training di Kaggle) ---
-
-        // 1. Ubah gambar ke Tensor
-        let tensor = tf.browser.fromPixels(imgElement);
-
-        // 2. Resize ke 224x224 (Ukuran MobileNetV2)
-        tensor = tf.image.resizeBilinear(tensor, [224, 224]);
-
-        // 3. Normalisasi (Ubah nilai pixel 0-255 jadi 0-1)
-        // Ini SANGAT PENTING karena kita pakai rescale=1./255 saat training
-        tensor = tensor.div(255.0);
-
-        // 4. Tambah dimensi batch (karena model minta input [1, 224, 224, 3])
-        tensor = tensor.expandDims(0);
-
-        // --- PREDIKSI ---
-        const prediction = model.predict(tensor) as tf.Tensor;
-        const values = await prediction.data(); // Dapat array probabilitas (misal: [0.1, 0.8, ...])
-
-        // Pasangkan nilai dengan nama kelas
-        const classesWithScore = Array.from(values).map((value, index) => ({
-          label: CLASSES[index],
-          score: value,
-        }));
-        console.log("Hasil prediksi AI:", classesWithScore);
-
-        // Urutkan dari yang skornya tertinggi
-        const sortedResults = classesWithScore
-          .sort((a, b) => b.score - a.score)
-          .slice(0, 3) // Ambil Top 3 saja
-          .map((item) => ({
-            label: item.label,
-            score: Math.round(item.score * 100), // Jadikan persen
+  // Auto-fetch location on mount
+  useEffect(() => {
+    if (!formData.latitude && !formData.longitude && "geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setFormData((prev) => ({
+            ...prev,
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
           }));
+        },
+        (error) => {
+           console.warn("Location access denied or failed", error);
+           setAddress("Lokasi tidak dapat diambil otomatis. Silakan pilih di peta.");
+        }
+      );
+    }
+  }, []);
 
-        setCategorySuggestion(sortedResults);
+  const handleImageAnalysis = async (file: File) => {
+    const results = await analyzeImage(file);
+    
+    if (results && results.length > 0) {
+      const topResult = results[0];
+      const allLabels = results.map(r => r.label).join(", ");
+      
+      // Auto-fill form fields
+      setFormData(prev => {
+          let newType = prev.report_type;
+          
+          // Simple keyword mapping for report type
+          const lowerLabel = topResult.label.toLowerCase();
+          if (["plastic", "bottle", "bag", "cup", "container"].some(k => lowerLabel.includes(k))) newType = "plastic";
+          else if (["glass", "ceramic", "break"].some(k => lowerLabel.includes(k))) newType = "waste";
+          else if (["battery", "chemical", "toxic", "medical"].some(k => lowerLabel.includes(k))) newType = "hazardous";
+          else if (["paper", "cardboard", "wood", "textile", "cloth"].some(k => lowerLabel.includes(k))) newType = "waste";
 
-        // Bersihkan memori tensor (Penting agar browser tidak berat!)
-        tf.dispose(tensor);
-
-        setIsAnalyzing(false);
-      };
-    } catch (error) {
-      console.error("Analisis gagal:", error);
-      setIsAnalyzing(false);
+          return {
+              ...prev,
+              title: prev.title || `Laporan: ${topResult.label}`, // Only fill if empty
+              description: prev.description || `Terdeteksi objek: ${allLabels}.\nMohon ditindaklanjuti.`,
+              report_type: newType
+          };
+      });
+      
+      setAiTags(results.map(r => r.label));
     }
   };
 
@@ -274,13 +224,38 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
     }
 
     try {
+      // 1. Upload foto ke Supabase Storage (jika ada)
+      let uploadedUrls: string[] = [];
+      
+      if (filesToUpload.length > 0) {
+        const uploadPromises = filesToUpload.map(file => uploadImage(file));
+        const results = await Promise.all(uploadPromises);
+        
+        // Filter yang berhasil (tidak null)
+        uploadedUrls = results.filter((url): url is string => url !== null);
+        
+        if (uploadedUrls.length !== filesToUpload.length) {
+           console.warn("Beberapa gambar gagal diupload");
+           // Opsional: Tampilkan warning ke user atau stop process
+        }
+      }
+
+      // 2. Siapkan data final
+      const dataToSubmit = {
+        ...formData,
+        image_urls: uploadedUrls
+      };
+
       const response = await fetch("/api/reports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(dataToSubmit),
       });
 
-      if (!response.ok) throw new Error("Gagal mengirim laporan");
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Gagal mengirim laporan");
+      }
 
       const data = await response.json();
       setSuccess(true);
@@ -497,7 +472,7 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
               handlePhotoUpload(e);
               const files = e.target.files;
               if (files && files[0]) {
-                analyzeImage(files[0]);
+                handleImageAnalysis(files[0]);
               }
             }}
             disabled={imagePreview.length >= 3}
@@ -549,9 +524,17 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
               type="checkbox"
               id="anonymous"
               checked={formData.is_anonymous}
-              onChange={(e) =>
-                setFormData({ ...formData, is_anonymous: e.target.checked })
-              }
+              onChange={(e) => {
+                const isAnon = e.target.checked;
+                setFormData(prev => ({
+                   ...prev, 
+                   is_anonymous: isAnon,
+                   // Clear data if switching TO anonymous
+                   user_name: isAnon ? "" : prev.user_name,
+                   user_email: isAnon ? "" : prev.user_email,
+                   user_phone: isAnon ? "" : prev.user_phone
+                }));
+              }}
               className="rounded"
             />
             <Label htmlFor="anonymous" className="font-medium cursor-pointer">

@@ -17,9 +17,10 @@ interface Report {
   status: string;
   report_type: string;
   confirmations_count: number;
-  user_name: string;
-  image_urls: string[];
-  created_at: string;
+  // Fields not returned in map mode
+  user_name?: string;
+  image_urls?: string[];
+  created_at?: string;
 }
 
 const severityColors: Record<string, string> = {
@@ -44,7 +45,7 @@ export default function MapContainer() {
 
   const fetchReports = async () => {
     try {
-      const response = await fetch("/api/reports");
+      const response = await fetch("/api/reports?mode=map");
       const data = await response.json();
       setReports(data);
       setLoading(false);
