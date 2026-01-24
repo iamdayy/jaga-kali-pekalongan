@@ -5,6 +5,11 @@ export interface CategorySuggestion {
   score: number;
 }
 
+export interface ModelConfig {
+    type: "mobilenet" | "custom";
+    modelUrl?: string; // URL to model.json (for custom files)
+}
+
 export function useImageClassifier() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [categorySuggestion, setCategorySuggestion] = useState<CategorySuggestion[]>([]);
@@ -16,15 +21,13 @@ export function useImageClassifier() {
         workerRef.current = new Worker("/model-worker.js");
         console.log("AI Worker initialized");
     }
-
+    
     return () => {
-        // Optional: terminate on unmount if we want to save memory, 
-        // but keeping it alive for single-page nav might be better. 
-        // For now, let's keep it simple.
+        // workerRef.current?.terminate();
     };
   }, []);
 
-  const analyzeImage = async (file: File) => {
+  const analyzeImage = async (file: File, config?: ModelConfig) => {
     setIsAnalyzing(true);
     setCategorySuggestion([]);
 
@@ -32,6 +35,8 @@ export function useImageClassifier() {
       // 1. Resize image to 224x224 and get ImageData (Main Thread)
       const imageData = await new Promise<ImageData>((resolve, reject) => {
           const img = document.createElement("img");
+          const objectUrl = URL.createObjectURL(file);
+          
           img.onload = () => {
               const canvas = document.createElement("canvas");
               canvas.width = 224;
@@ -41,9 +46,13 @@ export function useImageClassifier() {
               
               ctx.drawImage(img, 0, 0, 224, 224);
               resolve(ctx.getImageData(0, 0, 224, 224));
+              URL.revokeObjectURL(objectUrl);
           };
-          img.onerror = reject;
-          img.src = URL.createObjectURL(file);
+          img.onerror = (e) => {
+             URL.revokeObjectURL(objectUrl);
+             reject(e);
+          };
+          img.src = objectUrl;
       });
 
       // 2. Send to Worker
@@ -57,7 +66,7 @@ export function useImageClassifier() {
               // Cleanup listener
               workerRef.current?.removeEventListener("message", handler);
               
-              const { success, suggestions, error } = e.data;
+              const { success, suggestions, color, error } = e.data;
               
               if (success) {
                    const uiSuggestions = suggestions.map((s: any) => ({
@@ -65,7 +74,8 @@ export function useImageClassifier() {
                         score: Math.round(s.confidence * 100)
                     }));
                    setCategorySuggestion(uiSuggestions);
-                   resolve(uiSuggestions);
+                   // We return the raw results + color now
+                   resolve(Object.assign(uiSuggestions, { color }));
               } else {
                   console.error("Worker Error:", error);
                   resolve([]);
@@ -74,7 +84,7 @@ export function useImageClassifier() {
           };
 
           workerRef.current.addEventListener("message", handler);
-          workerRef.current.postMessage({ imageData });
+          workerRef.current.postMessage({ imageData, config });
       });
 
     } catch (error) {
@@ -84,5 +94,5 @@ export function useImageClassifier() {
     }
   };
 
-  return { isAnalyzing, categorySuggestion, analyzeImage, model: null }; // No direct access to model
+  return { isAnalyzing, categorySuggestion, analyzeImage }; 
 }

@@ -4,14 +4,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useImageClassifier } from "@/hooks/use-image-classifier";
+import { translateLabel } from "@/lib/translations";
 import { uploadImage } from "@/lib/upload-image";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -177,33 +178,112 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
     }
   }, []);
 
+
   const handleImageAnalysis = async (file: File) => {
-    const results = await analyzeImage(file);
+    // Optional: Pass config here if we want to switch models dynamically
+    const results: any = await analyzeImage(file); // Cast to any to access custom properties like .color
     
     if (results && results.length > 0) {
       const topResult = results[0];
-      const allLabels = results.map(r => r.label).join(", ");
+      const colorAnalysis = results.color;
+      
+      // Translate labels for UI
+      const translatedTags = results.map((r: any) => translateLabel(r.label));
       
       // Auto-fill form fields
       setFormData(prev => {
+          // 1. Determine Type & Severity
           let newType = prev.report_type;
-          
-          // Simple keyword mapping for report type
+          let newSeverity = "medium";
+          let detectedCondition = "";
+
           const lowerLabel = topResult.label.toLowerCase();
-          if (["plastic", "bottle", "bag", "cup", "container"].some(k => lowerLabel.includes(k))) newType = "plastic";
-          else if (["glass", "ceramic", "break"].some(k => lowerLabel.includes(k))) newType = "waste";
-          else if (["battery", "chemical", "toxic", "medical"].some(k => lowerLabel.includes(k))) newType = "hazardous";
-          else if (["paper", "cardboard", "wood", "textile", "cloth"].some(k => lowerLabel.includes(k))) newType = "waste";
+          const translatedLower = translateLabel(topResult.label).toLowerCase();
+          const pLabel = (k: string) => lowerLabel.includes(k) || translatedLower.includes(k);
+
+          // Water Context Check
+          const isWaterContext = ["lake", "river", "dam", "seashore", "water", "fountain", "cliff", "danau", "sungai", "pantai", "air"].some(pLabel);
+          console.log("isWaterContext", isWaterContext);
+          console.log("colorAnalysis", colorAnalysis);
+
+          // Standard Object Detection
+          if (["plastic", "bottle", "bag", "cup", "container", "plastik", "botol", "kantong"].some(pLabel)) {
+              newType = "plastic";
+              newSeverity = "medium";
+          }
+          else if (["glass", "ceramic", "break", "kaca", "gelas", "pecah", "beling"].some(pLabel)) {
+              newType = "waste";
+              newSeverity = "medium";
+          }
+          else if (["battery", "chemical", "toxic", "medical", "baterai", "kimia", "racun", "limbah", "obat"].some(pLabel)) {
+              newType = "hazardous";
+              newSeverity = "high"; // Hazardous is always high priority
+          }
+          else if (["paper", "cardboard", "wood", "textile", "cloth", "kertas", "kardus", "kayu", "kain"].some(pLabel)) {
+              newType = "waste";
+              newSeverity = "low"; 
+          }
+          else if (["trash", "garbage", "rubbish", "sampah"].some(pLabel)) {
+               newType = "waste";
+               newSeverity = "medium";
+          }
+          // Pollution Detection via Color (if Water Context OR No Specific Object)
+          // if (isWaterContext || true) { // Always check color if no strong object match, or if it is water
+             const { r, g, b } = colorAnalysis || {r:0,g:0,b:0};
+             // Simple heuristics
+             if (r < 60 && g < 60 && b < 60) {
+              console.log("Pencemaran Berat (Air Hitam/Minyak)");
+                 detectedCondition = "Pencemaran Berat (Air Hitam/Minyak)";
+                 newType = "hazardous";
+                 newSeverity = "high";
+             } else if (r > g + 20 && g > b + 10) {
+              console.log("Air Keruh (Lumpur/Sedimen)");
+                 detectedCondition = "Air Keruh (Lumpur/Sedimen)";
+                 newType = "waste";
+                 newSeverity = "medium";
+             } else if (g > r + 20 && g > b + 20) {
+              console.log("Eutrofikasi (Alga/Lumut)");
+                 detectedCondition = "Eutrofikasi (Alga/Lumut)";
+                 newType = "waste";
+                 newSeverity = "medium";
+             } else {
+              console.log("Tidak terdeteksi pencemaran air");
+             }
+          // }
+
+          // 2. Generate Smart Title
+          const categoryName = translateLabel(topResult.label);
+          const timeString = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+          
+          let generatedTitle = `Laporan ${categoryName} (${timeString})`;
+          if (detectedCondition) {
+              generatedTitle = `Laporan ${detectedCondition} (${timeString})`;
+          }
+
+          // 3. Generate Detailed Description
+          const tagsString = translatedTags.join(", ");
+          const urgencyText = newSeverity === 'high' ? "SANGAT MENDESAK" : newSeverity === 'medium' ? "Perlu perhatian" : "Dapat ditangani rutin";
+          
+          let generatedDesc = `Terdeteksi objek: ${tagsString}.\n`;
+          
+          if (detectedCondition) {
+               generatedDesc += `Kondisi Air: ${detectedCondition} (Dominan Warna RGB: ${colorAnalysis?.r},${colorAnalysis?.g},${colorAnalysis?.b}).\n`;
+          }
+          
+          generatedDesc += `Kategori: ${newType.toUpperCase()}.\n` +
+                           `Tingkat Urgensi: ${urgencyText}.\n` +
+                           `Mohon segera ditindaklanjuti tim terkait.`;
 
           return {
               ...prev,
-              title: prev.title || `Laporan: ${topResult.label}`, // Only fill if empty
-              description: prev.description || `Terdeteksi objek: ${allLabels}.\nMohon ditindaklanjuti.`,
-              report_type: newType
+              title: prev.title || generatedTitle,
+              description: prev.description || generatedDesc,
+              report_type: newType,
+              severity: newSeverity
           };
       });
       
-      setAiTags(results.map(r => r.label));
+      setAiTags(translatedTags);
     }
   };
 
@@ -334,6 +414,80 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
         onSubmit={handleSubmit}
         className="bg-card rounded-lg border border-border p-8 space-y-6"
       >
+        {/* 1. Foto Bukti (Prioritas Utama) */}
+        <div>
+          <Label className="text-base font-semibold mb-2 block">
+            Foto Bukti (Optional)
+          </Label>
+          <div
+            className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-teal-600 transition-colors"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <ImageIcon className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+            <p className="text-sm font-medium text-foreground">
+              Klik untuk upload foto
+            </p>
+            <p className="text-xs text-muted-foreground">
+              PNG, JPG hingga 5MB per foto (Maks 3 foto)
+            </p>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              handlePhotoUpload(e);
+              const files = e.target.files;
+              if (files && files[0]) {
+                handleImageAnalysis(files[0]);
+              }
+            }}
+            disabled={imagePreview.length >= 3}
+          />
+
+          {imagePreview.length > 0 && (
+            <div className="mt-4 grid grid-cols-3 gap-3">
+              {imagePreview.map((preview, idx) => (
+                <div key={idx} className="relative group">
+                  <img
+                    src={preview || "/placeholder.svg"}
+                    alt={`Preview ${idx + 1}`}
+                    className="w-full h-24 object-cover rounded-lg border border-border"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeImage(idx)}
+                    className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                  {isAnalyzing && (
+                    <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
+                      <Loader className="w-6 h-6 text-white animate-spin" />
+                    </div>
+                  )}
+                  {/* {aiTags.length > 0 && !isAnalyzing && (
+                    <div className="absolute bottom-1 left-1 bg-teal-600 text-white text-xs px-2 py-1 rounded">
+                      AI Tags: {aiTags.join(", ")}
+                    </div>
+                  )} */}
+                  {/* {categorySuggestion.length > 0 && !isAnalyzing && (
+                    <div className="absolute bottom-1 right-1 bg-blue-600 text-white text-xs px-2 py-1 rounded">
+                      Category Suggestion:{" "}
+                      {categorySuggestion
+                        .map((cat) => `${cat.label} (${cat.score})`)
+                        .join(", ")}
+                    </div>
+                  )} */}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 2. Informasi Dasar */}
         <div>
           <Label htmlFor="title" className="text-base font-semibold">
             Judul Laporan *
@@ -444,78 +598,6 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
             }
             className="mt-2"
           />
-        </div>
-
-        <div>
-          <Label className="text-base font-semibold mb-2 block">
-            Foto Bukti (Optional)
-          </Label>
-          <div
-            className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-teal-600 transition-colors"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <ImageIcon className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm font-medium text-foreground">
-              Klik untuk upload foto
-            </p>
-            <p className="text-xs text-muted-foreground">
-              PNG, JPG hingga 5MB per foto (Maks 3 foto)
-            </p>
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              handlePhotoUpload(e);
-              const files = e.target.files;
-              if (files && files[0]) {
-                handleImageAnalysis(files[0]);
-              }
-            }}
-            disabled={imagePreview.length >= 3}
-          />
-
-          {imagePreview.length > 0 && (
-            <div className="mt-4 grid grid-cols-3 gap-3">
-              {imagePreview.map((preview, idx) => (
-                <div key={idx} className="relative group">
-                  <img
-                    src={preview || "/placeholder.svg"}
-                    alt={`Preview ${idx + 1}`}
-                    className="w-full h-24 object-cover rounded-lg border border-border"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeImage(idx)}
-                    className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                  {isAnalyzing && (
-                    <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
-                      <Loader className="w-6 h-6 text-white animate-spin" />
-                    </div>
-                  )}
-                  {aiTags.length > 0 && !isAnalyzing && (
-                    <div className="absolute bottom-1 left-1 bg-teal-600 text-white text-xs px-2 py-1 rounded">
-                      AI Tags: {aiTags.join(", ")}
-                    </div>
-                  )}
-                  {categorySuggestion.length > 0 && !isAnalyzing && (
-                    <div className="absolute bottom-1 right-1 bg-blue-600 text-white text-xs px-2 py-1 rounded">
-                      Category Suggestion:{" "}
-                      {categorySuggestion
-                        .map((cat) => `${cat.label} (${cat.score})`)
-                        .join(", ")}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
         <div className="border-t border-border pt-6">
