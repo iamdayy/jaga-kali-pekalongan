@@ -1,29 +1,29 @@
-"use client";
-
 import type React from "react";
 
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useImageClassifier } from "@/hooks/use-image-classifier";
+import { uploadImage } from "@/lib/upload-image";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { Loader, MapPin } from "lucide-react";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { ImageIcon, Loader, MapPin, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AddressDisplay } from "./address-display";
 
 interface ReportFormModalProps {
@@ -46,6 +46,7 @@ interface FormData {
   user_email: string;
   user_phone: string;
   is_anonymous: boolean;
+  image_urls: string[];
 }
 
 export default function ReportFormModal({
@@ -67,12 +68,22 @@ export default function ReportFormModal({
     user_email: "",
     user_phone: "",
     is_anonymous: true,
+    image_urls: [],
   });
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [showMap, setShowMap] = useState(false);
+  
+  // Image handling state
+  const [imagePreview, setImagePreview] = useState<string[]>([]);
+  const [filesToUpload, setFilesToUpload] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const { isAnalyzing, categorySuggestion, analyzeImage } = useImageClassifier();
+  const [aiTags, setAiTags] = useState<string[]>([]);
+
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markerRef = useRef<L.Marker | null>(null);
@@ -90,9 +101,12 @@ export default function ReportFormModal({
       user_email: "",
       user_phone: "",
       is_anonymous: true,
+      image_urls: [],
     });
     setSuccess(false);
     setShowMap(false);
+    setImagePreview([]);
+    setFilesToUpload([]);
     if (mapRef.current) {
       mapRef.current.remove();
       mapRef.current = null;
@@ -140,6 +154,70 @@ export default function ReportFormModal({
     mapRef.current = map;
   };
 
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    Array.from(files).forEach((file) => {
+      setFilesToUpload((prev) => [...prev, file]);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const base64 = event.target?.result as string;
+        setImagePreview((prev) => [...prev, base64]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeImage = (index: number) => {
+    setImagePreview((prev) => prev.filter((_, i) => i !== index));
+    setFilesToUpload((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Auto-fetch location on open if needed
+  useEffect(() => {
+    if (isOpen && !latitude && !longitude && "geolocation" in navigator) {
+         navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setFormData((prev) => ({
+            ...prev,
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          }));
+        },
+        (error) => console.warn("Location error:", error)
+      );
+    }
+  }, [isOpen, latitude, longitude]);
+
+  const handleImageAnalysis = async (file: File) => {
+    const results = await analyzeImage(file);
+    
+    if (results && results.length > 0) {
+      const topResult = results[0];
+      const allLabels = results.map(r => r.label).join(", ");
+      
+      // Auto-fill form fields
+      setFormData(prev => {
+          let newType = prev.report_type;
+          
+          // Keyword mapping
+          const lowerLabel = topResult.label.toLowerCase();
+          if (["plastic", "bottle", "bag", "cup", "container"].some(k => lowerLabel.includes(k))) newType = "plastic";
+          else if (["glass", "ceramic", "break"].some(k => lowerLabel.includes(k))) newType = "waste";
+          else if (["battery", "chemical", "toxic", "medical"].some(k => lowerLabel.includes(k))) newType = "hazardous";
+          else if (["paper", "cardboard", "wood", "textile", "cloth"].some(k => lowerLabel.includes(k))) newType = "waste";
+
+          return {
+              ...prev,
+              title: prev.title || `Laporan: ${topResult.label}`,
+              description: prev.description || `Terdeteksi objek: ${allLabels}.\nMohon ditindaklanjuti.`,
+              report_type: newType
+          };
+      });
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -157,10 +235,24 @@ export default function ReportFormModal({
     }
 
     try {
+      // 1. Upload images
+      let uploadedUrls: string[] = [];
+      if (filesToUpload.length > 0) {
+        const uploadPromises = filesToUpload.map(file => uploadImage(file));
+        const results = await Promise.all(uploadPromises);
+        uploadedUrls = results.filter((url): url is string => url !== null);
+      }
+
+      // 2. Submit data
+      const dataToSubmit = {
+        ...formData,
+        image_urls: uploadedUrls
+      };
+
       const response = await fetch("/api/reports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(dataToSubmit),
       });
 
       if (!response.ok) throw new Error("Gagal mengirim laporan");
@@ -346,6 +438,72 @@ export default function ReportFormModal({
                 className="mt-2"
               />
             </div>
+            
+            {/* Image Upload Section */}
+            <div>
+              <Label className="text-base font-semibold mb-2 block">
+                Foto Bukti (Optional)
+              </Label>
+              <div
+                className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-teal-600 transition-colors"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <ImageIcon className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                <p className="text-sm font-medium text-foreground">
+                  Klik untuk upload foto
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Format: JPG, PNG. Maks 3 foto.
+                </p>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  handlePhotoUpload(e);
+                  const files = e.target.files;
+                  if (files && files[0]) {
+                    handleImageAnalysis(files[0]);
+                  }
+                }}
+                disabled={imagePreview.length >= 3}
+              />
+
+              {imagePreview.length > 0 && (
+                <div className="mt-4 grid grid-cols-3 gap-3">
+                  {imagePreview.map((preview, idx) => (
+                    <div key={idx} className="relative group">
+                      <img
+                        src={preview || "/placeholder.svg"}
+                        alt={`Preview ${idx + 1}`}
+                        className="w-full h-24 object-cover rounded-lg border border-border"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeImage(idx)}
+                        className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                      {isAnalyzing && (
+                        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
+                          <Loader className="w-6 h-6 text-white animate-spin" />
+                        </div>
+                      )}
+                      {categorySuggestion.length > 0 && !isAnalyzing && (
+                        <div className="absolute bottom-1 right-1 bg-blue-600 text-white text-xs px-2 py-1 rounded">
+                          Category:{" "}
+                          {categorySuggestion[0].label} ({categorySuggestion[0].score}%)
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <div className="border-t border-border pt-4">
               <div className="flex items-center gap-2 mb-4">
@@ -353,9 +511,16 @@ export default function ReportFormModal({
                   type="checkbox"
                   id="anonymous"
                   checked={formData.is_anonymous}
-                  onChange={(e) =>
-                    setFormData({ ...formData, is_anonymous: e.target.checked })
-                  }
+                  onChange={(e) => {
+                     const isAnon = e.target.checked;
+                     setFormData(prev => ({ 
+                       ...prev, 
+                       is_anonymous: isAnon,
+                       user_name: isAnon ? "" : prev.user_name,
+                       user_email: isAnon ? "" : prev.user_email,
+                       user_phone: isAnon ? "" : prev.user_phone
+                     }));
+                  }}
                   className="rounded"
                 />
                 <Label

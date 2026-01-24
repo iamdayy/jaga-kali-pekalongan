@@ -25,16 +25,16 @@ export default function Header() {
             Laporkan
           </Link>
           <Link
-            href="#fitur"
-            className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Fitur
-          </Link>
-          <Link
-            href="#statistik"
+            href="/#statistik"
             className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
           >
             Statistik
+          </Link>
+          <Link
+            href="/#fitur"
+            className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Fitur
           </Link>
           <Link
             href="/admin"

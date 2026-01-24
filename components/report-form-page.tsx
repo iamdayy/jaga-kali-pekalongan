@@ -4,20 +4,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useImageClassifier } from "@/hooks/use-image-classifier";
+import { uploadImage } from "@/lib/upload-image";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { ImageIcon, Loader, MapPin, X } from "lucide-react";
 import Link from "next/link";
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
-
 interface FormData {
   title: string;
   description: string;
@@ -36,6 +37,8 @@ interface FormData {
 interface ReportFormPageProps {
   onSuccess: (reportId: string) => void;
 }
+
+
 export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
   const [formData, setFormData] = useState<FormData>({
     title: "",
@@ -58,11 +61,15 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
   const [successReportId, setSuccessReportId] = useState<string | null>(null);
   const [showMap, setShowMap] = useState(false);
   const [imagePreview, setImagePreview] = useState<string[]>([]);
+  const [filesToUpload, setFilesToUpload] = useState<File[]>([]);
   const [address, setAddress] = useState("Pilih lokasi di peta");
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markerRef = useRef<L.Marker | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const { isAnalyzing, categorySuggestion, analyzeImage } = useImageClassifier();
+  const [aiTags, setAiTags] = useState<string[]>([]);
 
   useEffect(() => {
     if (formData.latitude && formData.longitude) {
@@ -131,16 +138,16 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
     if (!files) return;
 
     Array.from(files).forEach((file) => {
+      // Simpan file asli untuk diupload nanti
+      setFilesToUpload((prev) => [...prev, file]);
+
       const reader = new FileReader();
       reader.onload = (event) => {
         const base64 = event.target?.result as string;
         setImagePreview((prev) => [...prev, base64]);
-        // In production, upload to Vercel Blob here
-        // For now, we'll store as base64 - ready for Blob integration
-        setFormData((prev) => ({
-          ...prev,
-          image_urls: [...prev.image_urls, base64],
-        }));
+        
+        // JANGAN simpan base64 ke formData.image_urls
+        // Kita akan isi image_urls dengan URL dari Supabase setelah upload berhasil
       };
       reader.readAsDataURL(file);
     });
@@ -148,10 +155,56 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
 
   const removeImage = (index: number) => {
     setImagePreview((prev) => prev.filter((_, i) => i !== index));
-    setFormData((prev) => ({
-      ...prev,
-      image_urls: prev.image_urls.filter((_, i) => i !== index),
-    }));
+    setFilesToUpload((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Auto-fetch location on mount
+  useEffect(() => {
+    if (!formData.latitude && !formData.longitude && "geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setFormData((prev) => ({
+            ...prev,
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          }));
+        },
+        (error) => {
+           console.warn("Location access denied or failed", error);
+           setAddress("Lokasi tidak dapat diambil otomatis. Silakan pilih di peta.");
+        }
+      );
+    }
+  }, []);
+
+  const handleImageAnalysis = async (file: File) => {
+    const results = await analyzeImage(file);
+    
+    if (results && results.length > 0) {
+      const topResult = results[0];
+      const allLabels = results.map(r => r.label).join(", ");
+      
+      // Auto-fill form fields
+      setFormData(prev => {
+          let newType = prev.report_type;
+          
+          // Simple keyword mapping for report type
+          const lowerLabel = topResult.label.toLowerCase();
+          if (["plastic", "bottle", "bag", "cup", "container"].some(k => lowerLabel.includes(k))) newType = "plastic";
+          else if (["glass", "ceramic", "break"].some(k => lowerLabel.includes(k))) newType = "waste";
+          else if (["battery", "chemical", "toxic", "medical"].some(k => lowerLabel.includes(k))) newType = "hazardous";
+          else if (["paper", "cardboard", "wood", "textile", "cloth"].some(k => lowerLabel.includes(k))) newType = "waste";
+
+          return {
+              ...prev,
+              title: prev.title || `Laporan: ${topResult.label}`, // Only fill if empty
+              description: prev.description || `Terdeteksi objek: ${allLabels}.\nMohon ditindaklanjuti.`,
+              report_type: newType
+          };
+      });
+      
+      setAiTags(results.map(r => r.label));
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -171,13 +224,38 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
     }
 
     try {
+      // 1. Upload foto ke Supabase Storage (jika ada)
+      let uploadedUrls: string[] = [];
+      
+      if (filesToUpload.length > 0) {
+        const uploadPromises = filesToUpload.map(file => uploadImage(file));
+        const results = await Promise.all(uploadPromises);
+        
+        // Filter yang berhasil (tidak null)
+        uploadedUrls = results.filter((url): url is string => url !== null);
+        
+        if (uploadedUrls.length !== filesToUpload.length) {
+           console.warn("Beberapa gambar gagal diupload");
+           // Opsional: Tampilkan warning ke user atau stop process
+        }
+      }
+
+      // 2. Siapkan data final
+      const dataToSubmit = {
+        ...formData,
+        image_urls: uploadedUrls
+      };
+
       const response = await fetch("/api/reports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(dataToSubmit),
       });
 
-      if (!response.ok) throw new Error("Gagal mengirim laporan");
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Gagal mengirim laporan");
+      }
 
       const data = await response.json();
       setSuccess(true);
@@ -390,7 +468,13 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
             multiple
             accept="image/*"
             className="hidden"
-            onChange={handlePhotoUpload}
+            onChange={(e) => {
+              handlePhotoUpload(e);
+              const files = e.target.files;
+              if (files && files[0]) {
+                handleImageAnalysis(files[0]);
+              }
+            }}
             disabled={imagePreview.length >= 3}
           />
 
@@ -410,6 +494,24 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
                   >
                     <X className="w-3 h-3" />
                   </button>
+                  {isAnalyzing && (
+                    <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
+                      <Loader className="w-6 h-6 text-white animate-spin" />
+                    </div>
+                  )}
+                  {aiTags.length > 0 && !isAnalyzing && (
+                    <div className="absolute bottom-1 left-1 bg-teal-600 text-white text-xs px-2 py-1 rounded">
+                      AI Tags: {aiTags.join(", ")}
+                    </div>
+                  )}
+                  {categorySuggestion.length > 0 && !isAnalyzing && (
+                    <div className="absolute bottom-1 right-1 bg-blue-600 text-white text-xs px-2 py-1 rounded">
+                      Category Suggestion:{" "}
+                      {categorySuggestion
+                        .map((cat) => `${cat.label} (${cat.score})`)
+                        .join(", ")}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -422,9 +524,17 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
               type="checkbox"
               id="anonymous"
               checked={formData.is_anonymous}
-              onChange={(e) =>
-                setFormData({ ...formData, is_anonymous: e.target.checked })
-              }
+              onChange={(e) => {
+                const isAnon = e.target.checked;
+                setFormData(prev => ({
+                   ...prev, 
+                   is_anonymous: isAnon,
+                   // Clear data if switching TO anonymous
+                   user_name: isAnon ? "" : prev.user_name,
+                   user_email: isAnon ? "" : prev.user_email,
+                   user_phone: isAnon ? "" : prev.user_phone
+                }));
+              }}
               className="rounded"
             />
             <Label htmlFor="anonymous" className="font-medium cursor-pointer">
