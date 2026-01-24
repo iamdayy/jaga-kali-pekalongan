@@ -1,9 +1,14 @@
+import { isAdminAuthenticated } from "@/lib/admin-auth"
 import { createClient } from "@/lib/supabase/server"
 import { type NextRequest, NextResponse } from "next/server"
 
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
+    
+    if (!(await isAdminAuthenticated())) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
     const body = await request.json()
     const { reportId, action, adminUser, details } = body
 
@@ -26,6 +31,10 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient()
+
+    if (!(await isAdminAuthenticated())) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
     const { searchParams } = new URL(request.url)
     const reportId = searchParams.get("reportId")
 

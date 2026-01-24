@@ -1,8 +1,13 @@
+import { isAdminAuthenticated } from "@/lib/admin-auth"
 import { createClient } from "@/lib/supabase/server"
 import { type NextRequest, NextResponse } from "next/server"
 
 export async function GET(request: NextRequest) {
   try {
+    if (!(await isAdminAuthenticated())) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
     const supabase = await createClient()
     const { searchParams } = new URL(request.url)
 
