@@ -181,14 +181,14 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
 
   const handleImageAnalysis = async (file: File) => {
     // Optional: Pass config here if we want to switch models dynamically
-    const results: any = await analyzeImage(file); // Cast to any to access custom properties like .color
+    const results = await analyzeImage(file); // Cast to any to access custom properties like .color
     
-    if (results && results.length > 0) {
-      const topResult = results[0];
-      const colorAnalysis = results.color;
+    if (results && results.suggestions.length > 0) {
+      const topResult = results.suggestions[0];
+      const colorAnalysis = results.details?.water?.colorHex;
       
       // Translate labels for UI
-      const translatedTags = results.map((r: any) => translateLabel(r.label));
+      const translatedTags = results.suggestions.map((r: any) => translateLabel(r.label));
       
       // Auto-fill form fields
       setFormData(prev => {
@@ -197,8 +197,8 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
           let newSeverity = "medium";
           let detectedCondition = "";
 
-          const lowerLabel = topResult.label.toLowerCase();
-          const translatedLower = translateLabel(topResult.label).toLowerCase();
+          const lowerLabel = topResult.category.toLowerCase();
+          const translatedLower = translateLabel(topResult.category).toLowerCase();
           const pLabel = (k: string) => lowerLabel.includes(k) || translatedLower.includes(k);
 
           // Water Context Check
@@ -228,31 +228,10 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
                newSeverity = "medium";
           }
           // Pollution Detection via Color (if Water Context OR No Specific Object)
-          // if (isWaterContext || true) { // Always check color if no strong object match, or if it is water
-             const { r, g, b } = colorAnalysis || {r:0,g:0,b:0};
-             // Simple heuristics
-             if (r < 60 && g < 60 && b < 60) {
-              console.log("Pencemaran Berat (Air Hitam/Minyak)");
-                 detectedCondition = "Pencemaran Berat (Air Hitam/Minyak)";
-                 newType = "hazardous";
-                 newSeverity = "high";
-             } else if (r > g + 20 && g > b + 10) {
-              console.log("Air Keruh (Lumpur/Sedimen)");
-                 detectedCondition = "Air Keruh (Lumpur/Sedimen)";
-                 newType = "waste";
-                 newSeverity = "medium";
-             } else if (g > r + 20 && g > b + 20) {
-              console.log("Eutrofikasi (Alga/Lumut)");
-                 detectedCondition = "Eutrofikasi (Alga/Lumut)";
-                 newType = "waste";
-                 newSeverity = "medium";
-             } else {
-              console.log("Tidak terdeteksi pencemaran air");
-             }
-          // }
+          
 
           // 2. Generate Smart Title
-          const categoryName = translateLabel(topResult.label);
+          const categoryName = translateLabel(topResult.category);
           const timeString = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
           
           let generatedTitle = `Laporan ${categoryName} (${timeString})`;
@@ -267,7 +246,7 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
           let generatedDesc = `Terdeteksi objek: ${tagsString}.\n`;
           
           if (detectedCondition) {
-               generatedDesc += `Kondisi Air: ${detectedCondition} (Dominan Warna RGB: ${colorAnalysis?.r},${colorAnalysis?.g},${colorAnalysis?.b}).\n`;
+              //  generatedDesc += `Kondisi Air: ${detectedCondition} (Dominan Warna RGB: ${colorAnalysis?.r},${colorAnalysis?.g},${colorAnalysis?.b}).\n`;
           }
           
           generatedDesc += `Kategori: ${newType.toUpperCase()}.\n` +

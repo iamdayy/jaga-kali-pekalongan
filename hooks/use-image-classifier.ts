@@ -1,98 +1,84 @@
-import { useEffect, useRef, useState } from "react";
+import { ClassifyResponse } from "@/types";
+import { useState } from "react";
 
 export interface CategorySuggestion {
   label: string;
   score: number;
 }
 
-export interface ModelConfig {
-    type: "mobilenet" | "custom";
-    modelUrl?: string; // URL to model.json (for custom files)
+// Interface untuk data detail baru
+export interface AnalysisResult {
+    water?: {
+        found: boolean;
+        colorHex: string;
+        condition: string;
+    };
+    waste?: Array<{
+        label: string;
+        score: number;
+        box: any;
+    }>;
 }
 
 export function useImageClassifier() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [categorySuggestion, setCategorySuggestion] = useState<CategorySuggestion[]>([]);
-  const workerRef = useRef<Worker | null>(null);
+  const [detailedResult, setDetailedResult] = useState<AnalysisResult | null>(null);
 
-  // Initialize Worker once
-  useEffect(() => {
-    if (!workerRef.current) {
-        workerRef.current = new Worker("/model-worker.js");
-        console.log("AI Worker initialized");
-    }
-    
-    return () => {
-        // workerRef.current?.terminate();
-    };
-  }, []);
-
-  const analyzeImage = async (file: File, config?: ModelConfig) => {
+  const analyzeImage = async (file: File) => {
     setIsAnalyzing(true);
     setCategorySuggestion([]);
+    setDetailedResult(null);
 
     try {
-      // 1. Resize image to 224x224 and get ImageData (Main Thread)
-      const imageData = await new Promise<ImageData>((resolve, reject) => {
-          const img = document.createElement("img");
-          const objectUrl = URL.createObjectURL(file);
-          
-          img.onload = () => {
-              const canvas = document.createElement("canvas");
-              canvas.width = 224;
-              canvas.height = 224;
-              const ctx = canvas.getContext("2d");
-              if (!ctx) { reject(new Error("Canvas context failed")); return; }
-              
-              ctx.drawImage(img, 0, 0, 224, 224);
-              resolve(ctx.getImageData(0, 0, 224, 224));
-              URL.revokeObjectURL(objectUrl);
-          };
-          img.onerror = (e) => {
-             URL.revokeObjectURL(objectUrl);
-             reject(e);
-          };
-          img.src = objectUrl;
-      });
+        const formData = new FormData();
+        formData.append("image", file);
 
-      // 2. Send to Worker
-      return new Promise<CategorySuggestion[]>((resolve, reject) => {
-          if (!workerRef.current) {
-              reject(new Error("Worker not initialized"));
-              return;
-          }
+        // Panggil API Next.js kita
+        const response = await fetch("/api/classify", {
+            method: "POST",
+            body: formData,
+        });
 
-          const handler = (e: MessageEvent) => {
-              // Cleanup listener
-              workerRef.current?.removeEventListener("message", handler);
-              
-              const { success, suggestions, color, error } = e.data;
-              
-              if (success) {
-                   const uiSuggestions = suggestions.map((s: any) => ({
-                        label: s.category,
-                        score: Math.round(s.confidence * 100)
-                    }));
-                   setCategorySuggestion(uiSuggestions);
-                   // We return the raw results + color now
-                   resolve(Object.assign(uiSuggestions, { color }));
-              } else {
-                  console.error("Worker Error:", error);
-                  resolve([]);
-              }
-              setIsAnalyzing(false);
-          };
+        if (!response.ok) {
+            throw new Error("Gagal menganalisis gambar");
+        }
 
-          workerRef.current.addEventListener("message", handler);
-          workerRef.current.postMessage({ imageData, config });
-      });
+        const data: ClassifyResponse = await response.json();
+
+        // Mapping response API ke state UI
+        // Data.suggestions berisi array sederhana untuk kompatibilitas
+        if (data.suggestions) {
+             const formattedSuggestions = data.suggestions.map((s: any) => ({
+                label: s.category,
+                score: Math.round(s.confidence * 100)
+            }));
+            setCategorySuggestion(formattedSuggestions);
+        }
+
+        // Simpan data detail (warna air, posisi sampah) untuk UI lanjutan
+        if (data.details) {
+            setDetailedResult(data.details);
+        }
+        
+        // Kembalikan data untuk komponen yang memanggil langsung
+        return {
+            suggestions: data.suggestions,
+            details: data.details
+        };
 
     } catch (error) {
-      console.error("Analysis failed:", error);
-      setIsAnalyzing(false);
-      return null;
+        console.error("Analysis failed:", error);
+        return null;
+    } finally {
+        setIsAnalyzing(false);
     }
   };
 
-  return { isAnalyzing, categorySuggestion, analyzeImage }; 
+  return { 
+      isAnalyzing, 
+      categorySuggestion, // Kompatibel dengan UI lama
+      detailedResult,     // Data baru (Warna air, dll)
+      analyzeImage 
+  }; 
 }
