@@ -42,6 +42,7 @@ export default function MapContainer() {
   const [loading, setLoading] = useState(true);
   const [reports, setReports] = useState<Report[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("active");
 
   const fetchReports = async () => {
     try {
@@ -90,7 +91,6 @@ export default function MapContainer() {
 
   useEffect(() => {
     if (!mapRef.current) return;
-
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -98,16 +98,13 @@ export default function MapContainer() {
             [position.coords.latitude, position.coords.longitude],
             19
           );
-
           const marker = L.marker([
             position.coords.latitude,
             position.coords.longitude,
           ]).addTo(mapRef.current!);
           markersRef.current.push(marker);
         },
-        (error) => {
-          console.error("Error getting location:", error);
-        }
+        (error) => { console.error("Error getting location:", error); }
       );
     }
   }, []);
@@ -115,16 +112,115 @@ export default function MapContainer() {
   useEffect(() => {
     if (!mapRef.current) return;
 
-    // Clear existing markers
+    // Clear existing report markers
     markersRef.current.forEach((marker) => marker.remove());
     markersRef.current = [];
 
-    // Add markers for each report
-    reports.forEach((report) => {
+    // Filter reports for display
+    const visibleReports = reports.filter(r => {
+      if (statusFilter === "active") return r.status !== "completed";
+      if (statusFilter === "completed") return r.status === "completed";
+      return true; // all
+    });
+
+    // Helper for Blockage Detection
+    // Algorithm: Connected Components (clustering) based on 100m distance
+    // Score: High=3, Medium=2, Low=1. Threshold >= 3.
+    // ONLY consider active reports for blockage detection
+    const activeReports = reports.filter(r => r.status !== "completed");
+    
+    const visited = new Set<string>();
+    const blockagePoints: { lat: number; lng: number; score: number; count: number }[] = [];
+
+    const getRiskScore = (severity: string) => {
+      switch (severity) {
+        case "high": return 3;
+        case "medium": return 2;
+        default: return 1;
+      }
+    };
+
+    activeReports.forEach((report) => {
+      if (visited.has(report.id)) return;
+
+      const cluster: Report[] = [report];
+      const queue: Report[] = [report];
+      visited.add(report.id);
+
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        const currentLatLng = L.latLng(current.latitude, current.longitude);
+
+        activeReports.forEach((other) => {
+          if (!visited.has(other.id)) {
+            const dist = currentLatLng.distanceTo(L.latLng(other.latitude, other.longitude));
+            if (dist <= 100) { // 100 meters clustering radius
+              visited.add(other.id);
+              cluster.push(other);
+              queue.push(other);
+            }
+          }
+        });
+      }
+
+      // Calculate cluster risk
+      const totalScore = cluster.reduce((sum, r) => sum + getRiskScore(r.severity), 0);
+      
+      if (totalScore >= 3) {
+        // Find centroid
+        const totalLat = cluster.reduce((sum, r) => sum + r.latitude, 0);
+        const totalLng = cluster.reduce((sum, r) => sum + r.longitude, 0);
+        blockagePoints.push({
+          lat: totalLat / cluster.length,
+          lng: totalLng / cluster.length,
+          score: totalScore,
+          count: cluster.length
+        });
+      }
+    });
+
+    // Render Blockage Points (Pulse Effect)
+    // Only show blockage points if we are showing active reports or all
+    if (statusFilter !== "completed") {
+      blockagePoints.forEach((point) => {
+         const pulseHtml = `
+          <div style="position: relative; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;">
+            <div style="position: absolute; inset: 0; background-color: #dc2626; border-radius: 9999px; opacity: 0.75;" class="animate-ping"></div>
+            <div style="position: relative; width: 24px; height: 24px; background-color: #dc2626; border-radius: 9999px; border: 2px solid white; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); display: flex; align-items: center; justify-content: center; z-index: 50;">
+              <span style="color: white; font-size: 14px; font-weight: bold;">!</span>
+            </div>
+          </div>
+        `;
+  
+        const pulseIcon = L.divIcon({
+          html: pulseHtml,
+          className: "", // Disable default leaflet styling
+          iconSize: [40, 40],
+          iconAnchor: [20, 20],
+        });
+  
+        const start = L.marker([point.lat, point.lng], { icon: pulseIcon, zIndexOffset: 1000 }).addTo(mapRef.current!);
+        
+        start.bindPopup(`
+          <div class="font-sans text-sm p-1">
+            <strong class="text-red-600 block mb-1">⚠️ Potensi Sumbatan!</strong>
+            <span class="text-gray-600">Area rawan banjir (Radius 100m)</span><br/>
+            <span class="text-xs text-gray-500">Total ${point.count} laporan. Skor Risiko: ${point.score}</span>
+          </div>
+        `);
+        
+        markersRef.current.push(start);
+      });
+    }
+
+    // Add markers for each visible report
+    visibleReports.forEach((report) => {
       const color = severityColors[report.severity] || severityColors.medium;
+      // Dim color if completed
+      const opacity = report.status === "completed" ? 0.5 : 1;
 
       const html = `
-        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" style="opacity: ${opacity}">
           <circle cx="16" cy="16" r="14" fill="${color}" opacity="0.2" stroke="${color}" strokeWidth="2"/>
           <circle cx="16" cy="16" r="8" fill="${color}"/>
         </svg>
@@ -161,13 +257,27 @@ export default function MapContainer() {
       marker.bindPopup(popupContent);
       markersRef.current.push(marker);
     });
-  }, [reports]);
+  }, [reports, statusFilter]);
 
   return (
     <div className="w-full h-full relative">
       <div ref={containerRef} className="w-full h-full" />
+      
+      {/* Map Controls */}
+      <div className="absolute top-4 right-4 z-400 bg-white p-2 rounded-lg shadow-md flex flex-col gap-2 w-48">
+         <select 
+            className="w-full p-2 text-sm border rounded bg-background text-foreground"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+         >
+            <option value="active">Belum Selesai</option>
+            <option value="completed">Selesai</option>
+            <option value="all">Semua</option>
+         </select>
+      </div>
+
       {loading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-sm">
+        <div className="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-sm z-1000">
           <div className="flex flex-col items-center gap-2">
             <Loader className="w-8 h-8 text-teal-600 animate-spin" />
             <p className="text-sm text-muted-foreground">Memuat peta...</p>
