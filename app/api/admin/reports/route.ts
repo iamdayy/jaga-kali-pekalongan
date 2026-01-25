@@ -47,6 +47,10 @@ export async function GET(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    if (!(await isAdminAuthenticated())) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    } 
+
     const supabase = await createClient()
     const body = await request.json()
     const { reportId, updates } = body

@@ -1,14 +1,15 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useParams } from "next/navigation"
 import Header from "@/components/admin-header"
-import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Loader, Trash2 } from "lucide-react"
-import Link from "next/link"
 import ConfirmationDialog from "@/components/confirmation-dialog"
+import { Button } from "@/components/ui/button"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
+import { uploadImage } from "@/lib/upload-image"
+import { ImageIcon, Loader, Trash2, X } from "lucide-react"
+import Link from "next/link"
+import { useParams } from "next/navigation"
+import { useEffect, useState } from "react"
 
 interface Report {
   id: string
@@ -26,6 +27,8 @@ interface Report {
   created_at: string
   admin_notes: string | null
   assigned_to: string | null
+  proof_image_urls: string[] | null
+  completed_at: string | null
 }
 
 interface AdminLog {
@@ -54,6 +57,11 @@ export default function AdminReportEditorPage() {
   const [newStatus, setNewStatus] = useState<string>("")
   const [adminNotes, setAdminNotes] = useState("")
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  
+  // Proof Upload State
+  const [proofImages, setProofImages] = useState<string[]>([])
+  const [proofFiles, setProofFiles] = useState<File[]>([])
+  const [isUploading, setIsUploading] = useState(false)
 
   useEffect(() => {
     const fetchData = async () => {
@@ -69,6 +77,7 @@ export default function AdminReportEditorPage() {
         setReport(reportData)
         setNewStatus(reportData.status)
         setAdminNotes(reportData.admin_notes || "")
+        setProofImages(reportData.proof_image_urls || [])
 
         if (logsRes.ok) {
           const logsData = await logsRes.json()
@@ -262,7 +271,7 @@ export default function AdminReportEditorPage() {
             {/* Status Management */}
             <div className="p-4 bg-background rounded-lg border border-border">
               <h2 className="text-lg font-bold text-foreground mb-4">Kelola Status</h2>
-              <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex flex-col md:flex-row gap-4 mb-6">
                 <Select value={newStatus} onValueChange={setNewStatus}>
                   <SelectTrigger className="md:max-w-xs">
                     <SelectValue />
@@ -281,6 +290,93 @@ export default function AdminReportEditorPage() {
                   {saving ? <Loader className="w-4 h-4 animate-spin mr-2" /> : "Update Status"}
                 </Button>
               </div>
+
+               {/* Proof Upload Section (Visible if In Progress or Completed) */}
+              {(report.status === 'in_progress' || report.status === 'completed' || newStatus === 'completed') && (
+                 <div className="border-t border-border pt-4">
+                     <h3 className="text-md font-semibold mb-3 flex items-center gap-2">
+                         <ImageIcon className="w-4 h-4" /> Bukti Penyelesaian (Foto Bersih)
+                     </h3>
+
+                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                         {proofImages.map((url, idx) => (
+                             <div key={idx} className="relative group aspect-square">
+                                 <img src={url} alt={`Proof ${idx + 1}`} className="w-full h-full object-cover rounded-lg border border-border" />
+                                 {!report.completed_at && ( // Only allow delete if not finalized/archived, logic can vary
+                                     <button
+                                         onClick={async () => {
+                                             // Remove from UI state
+                                             const newImages = proofImages.filter((_, i) => i !== idx);
+                                             setProofImages(newImages);
+                                             // Trigger update immediately
+                                             try {
+                                                  await fetch("/api/admin/reports", {
+                                                     method: "PATCH",
+                                                     headers: { "Content-Type": "application/json" },
+                                                     body: JSON.stringify({
+                                                         reportId: id,
+                                                         updates: { proof_image_urls: newImages }
+                                                     }),
+                                                  });
+                                             } catch(e) { console.error("Failed to delete proof", e)}
+                                         }}
+                                         className="absolute top-1 right-1 bg-red-600 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                     >
+                                         <X className="w-3 h-3" />
+                                     </button>
+                                 )}
+                             </div>
+                         ))}
+                         
+                         {/* Upload Button */}
+                         <div className="relative border-2 border-dashed border-border rounded-lg flex flex-col items-center justify-center p-4 cursor-pointer hover:border-teal-600 transition-colors aspect-square">
+                            <input 
+                                type="file" 
+                                className="absolute inset-0 opacity-0 cursor-pointer"
+                                accept="image/*"
+                                multiple
+                                onChange={async (e) => {
+                                    if (e.target.files && e.target.files.length > 0) {
+                                      setIsUploading(true);
+                                      try {
+                                        const uploaded: string[] = [];
+                                        for (let i = 0; i < e.target.files.length; i++) {
+                                          const url = await uploadImage(e.target.files[i]);
+                                          if (url) uploaded.push(url);
+                                        }
+
+                                        const newImages = [...proofImages, ...uploaded];
+                                        setProofImages(newImages);
+                                        
+                                        // Save to DB
+                                        await fetch("/api/admin/reports", {
+                                           method: "PATCH",
+                                           headers: { "Content-Type": "application/json" },
+                                           body: JSON.stringify({
+                                              reportId: id,
+                                              updates: { 
+                                                  proof_image_urls: newImages,
+                                                  // Auto set completed_at if status is completed
+                                                  ...(newStatus === 'completed' || report.status === 'completed' ? { completed_at: new Date().toISOString() } : {})
+                                               }
+                                           }),
+                                        });
+
+                                      } catch (error) {
+                                        console.error("Upload failed", error);
+                                        setError("Gagal mengupload gambar bukti");
+                                      } finally {
+                                        setIsUploading(false);
+                                      }
+                                    }
+                                }}
+                            />
+                             {isUploading ? <Loader className="w-6 h-6 animate-spin text-muted-foreground" /> : <ImageIcon className="w-6 h-6 text-muted-foreground mb-1" />}
+                             <span className="text-xs text-muted-foreground text-center">{isUploading ? 'Uploading...' : 'Tambah Foto'}</span>
+                         </div>
+                     </div>
+                 </div>
+              )}
             </div>
 
             {/* Admin Notes */}

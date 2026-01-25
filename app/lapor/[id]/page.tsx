@@ -1,11 +1,11 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useParams } from "next/navigation"
 import Header from "@/components/header"
-import { Loader, MapPin, Calendar, User, CheckCircle2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Calendar, CheckCircle2, Loader, MapPin, User } from "lucide-react"
 import Link from "next/link"
+import { useParams } from "next/navigation"
+import { useEffect, useState } from "react"
 
 interface Report {
   id: string
@@ -22,6 +22,8 @@ interface Report {
   image_urls: string[]
   created_at: string
   is_anonymous: boolean
+  proof_image_urls: string[] | null
+  completed_at: string | null
 }
 
 const severityLabels: Record<string, string> = {
@@ -206,17 +208,50 @@ export default function ReportDetailPage() {
 
               {report.image_urls && report.image_urls.length > 0 && (
                 <div className="mb-8">
-                  <h2 className="text-xl font-bold text-foreground mb-3">Foto</h2>
+                  <h2 className="text-xl font-bold text-foreground mb-3">Foto Bukti Laporan ({report.image_urls.length})</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {report.image_urls.map((url, idx) => (
                       <img
                         key={idx}
                         src={url || "/placeholder.svg"}
-                        alt={`Foto ${idx + 1}`}
-                        className="w-full h-48 object-cover rounded-lg border border-border"
+                        alt={`Foto Bukti ${idx + 1}`}
+                        className="w-full h-48 object-cover rounded-lg border border-border bg-gray-100"
                       />
                     ))}
                   </div>
+                </div>
+              )}
+
+              {report.proof_image_urls && report.proof_image_urls.length > 0 && (
+                <div className="mb-8 p-6 bg-green-50 rounded-xl border border-green-200">
+                    <div className="flex items-center gap-2 mb-4">
+                        <CheckCircle2 className="w-6 h-6 text-green-600" />
+                        <h2 className="text-xl font-bold text-green-900">SUDAH DITANGANI / DIBERSIHKAN</h2>
+                    </div>
+                    
+                    {report.completed_at && (
+                        <p className="text-sm text-green-700 mb-4 font-medium flex items-center gap-1">
+                            <Calendar className="w-4 h-4" />
+                             Diselesaikan pada: {new Date(report.completed_at).toLocaleDateString("id-ID", {
+                                day: 'numeric', month: 'long', year: 'numeric'
+                             })}
+                        </p>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {report.proof_image_urls.map((url, idx) => (
+                        <div key={idx} className="relative group">
+                            <img
+                                src={url || "/placeholder.svg"}
+                                alt={`Bukti Penyelesaian ${idx + 1}`}
+                                className="w-full h-56 object-cover rounded-lg shadow-sm border border-green-200"
+                            />
+                            <div className="absolute bottom-2 right-2 bg-green-600 text-white text-xs px-2 py-1 rounded-full opacity-90">
+                              Bukti Penyelesaian
+                            </div>
+                        </div>
+                        ))}
+                    </div>
                 </div>
               )}
 
