@@ -237,8 +237,13 @@ export default function MapContainer() {
         icon,
       }).addTo(mapRef.current!);
 
+      const imageHtml = report.image_urls && report.image_urls.length > 0 
+        ? `<div class="mb-2"><img src="${report.image_urls[0]}" class="w-full h-32 object-cover rounded-md" alt="Foto Laporan" /></div>` 
+        : "";
+
       const popupContent = `
         <div class="p-3 w-64">
+          ${imageHtml}
           <h3 class="font-bold text-foreground mb-2">${report.title}</h3>
           <p class="text-sm text-muted-foreground mb-2">${report.address}</p>
           <div class="flex gap-2 mb-2">
@@ -246,7 +251,7 @@ export default function MapContainer() {
             <span class="text-xs px-2 py-1 rounded" style="background-color: ${color}; color: white;">${report.severity}</span>
             <span class="text-xs px-2 py-1 rounded bg-background text-foreground">${report.status}</span>
           </div>
-          <p class="text-sm text-muted-foreground mb-2">${report.description}</p>
+          <p class="text-sm text-muted-foreground mb-2 line-clamp-2">${report.description}</p>
           <div class="flex justify-between items-center">
             <span class="text-xs text-muted-foreground">✓ ${report.confirmations_count} validasi</span>
             <a href="/lapor/${report.id}" class="text-xs text-teal-600 hover:underline">Detail →</a>

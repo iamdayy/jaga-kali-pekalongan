@@ -211,12 +211,23 @@ export default function ReportDetailPage() {
                   <h2 className="text-xl font-bold text-foreground mb-3">Foto Bukti Laporan ({report.image_urls.length})</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {report.image_urls.map((url, idx) => (
-                      <img
-                        key={idx}
-                        src={url || "/placeholder.svg"}
-                        alt={`Foto Bukti ${idx + 1}`}
-                        className="w-full h-48 object-cover rounded-lg border border-border bg-gray-100"
-                      />
+                      <div key={idx} className="relative group aspect-video md:aspect-auto h-48">
+                        <img
+                          src={url || "/placeholder.svg"}
+                          alt={`Foto Bukti ${idx + 1}`}
+                          className="w-full h-full object-cover rounded-lg border border-border bg-gray-100"
+                        />
+                        <a 
+                          href={url || "#"} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100 rounded-lg"
+                        >
+                           <div className="bg-white/80 p-2 rounded-full shadow-sm text-xs font-medium text-black cursor-pointer">
+                             Lihat Full
+                           </div>
+                        </a>
+                      </div>
                     ))}
                   </div>
                 </div>

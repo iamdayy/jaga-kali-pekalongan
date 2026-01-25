@@ -263,6 +263,34 @@ export default function AdminReportEditorPage() {
               </div>
             </div>
 
+            {/* User Images */}
+            {report.image_urls && report.image_urls.length > 0 && (
+              <div>
+                <h2 className="text-lg font-bold text-foreground mb-3">Foto Bukti Pelapor</h2>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {report.image_urls.map((url, idx) => (
+                    <div key={idx} className="relative group aspect-square">
+                      <img
+                        src={url}
+                        alt={`Foto Laporan ${idx + 1}`}
+                        className="w-full h-full object-cover rounded-lg border border-border"
+                      />
+                      <a 
+                        href={url} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100"
+                      >
+                         <div className="bg-white/80 p-2 rounded-full shadow-sm text-xs font-medium text-black">
+                           Lihat Full
+                         </div>
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div>
               <h2 className="text-lg font-bold text-foreground mb-3">Deskripsi</h2>
               <p className="text-muted-foreground leading-relaxed">{report.description}</p>

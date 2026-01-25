@@ -2,23 +2,24 @@ import type React from "react";
 
 import { Button } from "@/components/ui/button";
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useImageClassifier } from "@/hooks/use-image-classifier";
+import { translateLabel } from "@/lib/translations";
 import { uploadImage } from "@/lib/upload-image";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -194,30 +195,89 @@ export default function ReportFormModal({
   }, [isOpen, latitude, longitude]);
 
   const handleImageAnalysis = async (file: File) => {
-    const results = await analyzeImage(file);
+    // Optional: Pass config here if we want to switch models dynamically
+    const results = await analyzeImage(file); // Cast to any to access custom properties like .color
     
-    if (results && results.suggestions && results.suggestions.length > 0) {
+    if (results && results.suggestions.length > 0) {
       const topResult = results.suggestions[0];
-      const allLabels = results.suggestions.map((r: any) => r.label || r.category).join(", ");
+      const colorAnalysis = results.details?.water?.colorHex;
+      
+      // Translate labels for UI
+      const translatedTags = results.suggestions.map((r: any) => translateLabel(r.label));
       
       // Auto-fill form fields
       setFormData(prev => {
+          // 1. Determine Type & Severity
           let newType = prev.report_type;
+          let newSeverity = "medium";
+          let detectedCondition = "";
+
+          const lowerLabel = topResult.category.toLowerCase();
+          const translatedLower = translateLabel(topResult.category).toLowerCase();
+          const pLabel = (k: string) => lowerLabel.includes(k) || translatedLower.includes(k);
+
+          // Water Context Check
+          const isWaterContext = ["lake", "river", "dam", "seashore", "water", "fountain", "cliff", "danau", "sungai", "pantai", "air"].some(pLabel);
+          console.log("isWaterContext", isWaterContext);
+          console.log("colorAnalysis", colorAnalysis);
+
+          // Standard Object Detection
+          if (["plastic", "bottle", "bag", "cup", "container", "plastik", "botol", "kantong"].some(pLabel)) {
+              newType = "plastic";
+              newSeverity = "medium";
+          }
+          else if (["glass", "ceramic", "break", "kaca", "gelas", "pecah", "beling"].some(pLabel)) {
+              newType = "waste";
+              newSeverity = "medium";
+          }
+          else if (["battery", "chemical", "toxic", "medical", "baterai", "kimia", "racun", "limbah", "obat"].some(pLabel)) {
+              newType = "hazardous";
+              newSeverity = "high"; // Hazardous is always high priority
+          }
+          else if (["paper", "cardboard", "wood", "textile", "cloth", "kertas", "kardus", "kayu", "kain"].some(pLabel)) {
+              newType = "waste";
+              newSeverity = "low"; 
+          }
+          else if (["trash", "garbage", "rubbish", "sampah"].some(pLabel)) {
+               newType = "waste";
+               newSeverity = "medium";
+          }
+          // Pollution Detection via Color (if Water Context OR No Specific Object)
           
-          // Keyword mapping
-          const lowerLabel = (topResult.category || "").toLowerCase();
-          if (["plastic", "bottle", "bag", "cup", "container"].some(k => lowerLabel.includes(k))) newType = "plastic";
-          else if (["glass", "ceramic", "break"].some(k => lowerLabel.includes(k))) newType = "waste";
-          else if (["battery", "chemical", "toxic", "medical"].some(k => lowerLabel.includes(k))) newType = "hazardous";
-          else if (["paper", "cardboard", "wood", "textile", "cloth"].some(k => lowerLabel.includes(k))) newType = "waste";
+
+          // 2. Generate Smart Title
+          const categoryName = translateLabel(topResult.category);
+          const timeString = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+          
+          let generatedTitle = `Laporan ${categoryName} (${timeString})`;
+          if (detectedCondition) {
+              generatedTitle = `Laporan ${detectedCondition} (${timeString})`;
+          }
+
+          // 3. Generate Detailed Description
+          const tagsString = translatedTags.join(", ");
+          const urgencyText = newSeverity === 'high' ? "SANGAT MENDESAK" : newSeverity === 'medium' ? "Perlu perhatian" : "Dapat ditangani rutin";
+          
+          let generatedDesc = `Terdeteksi objek: ${tagsString}.\n`;
+          
+          if (detectedCondition) {
+              //  generatedDesc += `Kondisi Air: ${detectedCondition} (Dominan Warna RGB: ${colorAnalysis?.r},${colorAnalysis?.g},${colorAnalysis?.b}).\n`;
+          }
+          
+          generatedDesc += `Kategori: ${newType.toUpperCase()}.\n` +
+                           `Tingkat Urgensi: ${urgencyText}.\n` +
+                           `Mohon segera ditindaklanjuti tim terkait.`;
 
           return {
               ...prev,
-              title: prev.title || `Laporan: ${topResult.category}`,
-              description: prev.description || `Terdeteksi objek: ${allLabels}.\nMohon ditindaklanjuti.`,
-              report_type: newType
+              title: prev.title || generatedTitle,
+              description: prev.description || generatedDesc,
+              report_type: newType,
+              severity: newSeverity
           };
       });
+      
+      setAiTags(translatedTags);
     }
   };
 
@@ -244,6 +304,10 @@ export default function ReportFormModal({
         const uploadPromises = filesToUpload.map(file => uploadImage(file));
         const results = await Promise.all(uploadPromises);
         uploadedUrls = results.filter((url): url is string => url !== null);
+        
+        if (uploadedUrls.length !== filesToUpload.length) {
+           console.warn("Beberapa gambar gagal diupload");
+        }
       }
 
       // 2. Submit data
@@ -258,13 +322,16 @@ export default function ReportFormModal({
         body: JSON.stringify(dataToSubmit),
       });
 
-      if (!response.ok) throw new Error("Gagal mengirim laporan");
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Gagal mengirim laporan");
+      }
 
       setSuccess(true);
       setTimeout(() => {
         onSuccess();
         resetForm();
-      }, 2000);
+      }, 3000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Terjadi kesalahan");
     } finally {
@@ -327,6 +394,74 @@ export default function ReportFormModal({
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-6">
+            
+            {/* 1. Foto Bukti (Prioritas Utama) */}
+            <div>
+              <Label className="text-base font-semibold mb-2 block">
+                Foto Bukti (Optional)
+              </Label>
+              <div
+                className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-teal-600 transition-colors"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <ImageIcon className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                <p className="text-sm font-medium text-foreground">
+                  Klik untuk upload foto
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Format: JPG, PNG. Maks 3 foto.
+                </p>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  handlePhotoUpload(e);
+                  const files = e.target.files;
+                  if (files && files[0]) {
+                    handleImageAnalysis(files[0]);
+                  }
+                }}
+                disabled={imagePreview.length >= 3}
+              />
+
+              {imagePreview.length > 0 && (
+                <div className="mt-4 grid grid-cols-3 gap-3">
+                  {imagePreview.map((preview, idx) => (
+                    <div key={idx} className="relative group">
+                      <img
+                        src={preview || "/placeholder.svg"}
+                        alt={`Preview ${idx + 1}`}
+                        className="w-full h-24 object-cover rounded-lg border border-border"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeImage(idx)}
+                        className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                      {isAnalyzing && (
+                        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
+                          <Loader className="w-6 h-6 text-white animate-spin" />
+                        </div>
+                      )}
+                      {categorySuggestion.length > 0 && !isAnalyzing && (
+                        <div className="absolute bottom-1 right-1 bg-blue-600 text-white text-xs px-2 py-1 rounded">
+                          Category:{" "}
+                          {categorySuggestion[0].label} ({categorySuggestion[0].score}%)
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 2. Informasi Dasar */}
             <div>
               <Label htmlFor="title" className="text-base font-semibold">
                 Judul Laporan *
@@ -395,9 +530,11 @@ export default function ReportFormModal({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="low">Rendah</SelectItem>
-                    <SelectItem value="medium">Sedang</SelectItem>
-                    <SelectItem value="high">Tinggi</SelectItem>
+                    <SelectItem value="low">Rendah - Belum mendesak</SelectItem>
+                    <SelectItem value="medium">
+                      Sedang - Perlu diperhatikan
+                    </SelectItem>
+                    <SelectItem value="high">Tinggi - Sangat mendesak</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -457,72 +594,6 @@ export default function ReportFormModal({
               />
             </div>
             
-            {/* Image Upload Section */}
-            <div>
-              <Label className="text-base font-semibold mb-2 block">
-                Foto Bukti (Optional)
-              </Label>
-              <div
-                className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-teal-600 transition-colors"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <ImageIcon className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-                <p className="text-sm font-medium text-foreground">
-                  Klik untuk upload foto
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Format: JPG, PNG. Maks 3 foto.
-                </p>
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  handlePhotoUpload(e);
-                  const files = e.target.files;
-                  if (files && files[0]) {
-                    handleImageAnalysis(files[0]);
-                  }
-                }}
-                disabled={imagePreview.length >= 3}
-              />
-
-              {imagePreview.length > 0 && (
-                <div className="mt-4 grid grid-cols-3 gap-3">
-                  {imagePreview.map((preview, idx) => (
-                    <div key={idx} className="relative group">
-                      <img
-                        src={preview || "/placeholder.svg"}
-                        alt={`Preview ${idx + 1}`}
-                        className="w-full h-24 object-cover rounded-lg border border-border"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => removeImage(idx)}
-                        className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                      {isAnalyzing && (
-                        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
-                          <Loader className="w-6 h-6 text-white animate-spin" />
-                        </div>
-                      )}
-                      {categorySuggestion.length > 0 && !isAnalyzing && (
-                        <div className="absolute bottom-1 right-1 bg-blue-600 text-white text-xs px-2 py-1 rounded">
-                          Category:{" "}
-                          {categorySuggestion[0].label} ({categorySuggestion[0].score}%)
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
             <div className="border-t border-border pt-4">
               <div className="flex items-center gap-2 mb-4">
                 <input
@@ -545,7 +616,7 @@ export default function ReportFormModal({
                   htmlFor="anonymous"
                   className="font-medium cursor-pointer"
                 >
-                  Laporan Anonim
+                  Laporan Anonim (Identitas Anda tidak akan ditampilkan)
                 </Label>
               </div>
 
