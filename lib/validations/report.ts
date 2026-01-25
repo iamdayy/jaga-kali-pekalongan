@@ -13,6 +13,7 @@ export const reportSchema = z.object({
   longitude: z.number({ required_error: "Lokasi wajib dipilih" }),
   address: z.string().optional(),
   is_anonymous: z.boolean().default(true),
+  is_valuable: z.boolean().default(false),
   user_name: z.string().optional(),
   user_email: z.string().email("Email tidak valid").optional().or(z.literal("")),
   user_phone: z.string().optional(),

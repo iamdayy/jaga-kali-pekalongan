@@ -4,11 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useImageClassifier } from "@/hooks/use-image-classifier";
@@ -32,6 +32,7 @@ interface FormData {
   user_email: string;
   user_phone: string;
   is_anonymous: boolean;
+  is_valuable: boolean;
   image_urls: string[];
 }
 
@@ -53,6 +54,7 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
     user_email: "",
     user_phone: "",
     is_anonymous: true,
+    is_valuable: false,
     image_urls: [],
   });
 
@@ -543,6 +545,21 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
               </SelectContent>
             </Select>
           </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+           <input
+              type="checkbox"
+              id="is_valuable"
+              checked={formData.is_valuable}
+              onChange={(e) =>
+                setFormData({ ...formData, is_valuable: e.target.checked })
+              }
+              className="rounded"
+            />
+            <Label htmlFor="is_valuable" className="font-medium cursor-pointer">
+              Sampah Bernilai Ekonomis (Misal: Botol Plastik, Kardus)
+            </Label>
         </div>
 
         <div>

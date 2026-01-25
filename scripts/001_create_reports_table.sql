@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS public.reports (
   status TEXT NOT NULL DEFAULT 'pending', -- pending, in_progress, completed
   confirmations_count INTEGER DEFAULT 0,
   is_anonymous BOOLEAN DEFAULT true,
+  is_valuable BOOLEAN DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

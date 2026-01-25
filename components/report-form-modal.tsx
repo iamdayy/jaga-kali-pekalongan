@@ -46,6 +46,7 @@ interface FormData {
   user_email: string;
   user_phone: string;
   is_anonymous: boolean;
+  is_valuable: boolean;
   image_urls: string[];
 }
 
@@ -68,6 +69,7 @@ export default function ReportFormModal({
     user_email: "",
     user_phone: "",
     is_anonymous: true,
+    is_valuable: false,
     image_urls: [],
   });
 
@@ -101,6 +103,7 @@ export default function ReportFormModal({
       user_email: "",
       user_phone: "",
       is_anonymous: true,
+      is_valuable: false,
       image_urls: [],
     });
     setSuccess(false);
@@ -193,16 +196,16 @@ export default function ReportFormModal({
   const handleImageAnalysis = async (file: File) => {
     const results = await analyzeImage(file);
     
-    if (results && results.length > 0) {
-      const topResult = results[0];
-      const allLabels = results.map(r => r.label).join(", ");
+    if (results && results.suggestions && results.suggestions.length > 0) {
+      const topResult = results.suggestions[0];
+      const allLabels = results.suggestions.map((r: any) => r.label || r.category).join(", ");
       
       // Auto-fill form fields
       setFormData(prev => {
           let newType = prev.report_type;
           
           // Keyword mapping
-          const lowerLabel = topResult.label.toLowerCase();
+          const lowerLabel = (topResult.category || "").toLowerCase();
           if (["plastic", "bottle", "bag", "cup", "container"].some(k => lowerLabel.includes(k))) newType = "plastic";
           else if (["glass", "ceramic", "break"].some(k => lowerLabel.includes(k))) newType = "waste";
           else if (["battery", "chemical", "toxic", "medical"].some(k => lowerLabel.includes(k))) newType = "hazardous";
@@ -210,7 +213,7 @@ export default function ReportFormModal({
 
           return {
               ...prev,
-              title: prev.title || `Laporan: ${topResult.label}`,
+              title: prev.title || `Laporan: ${topResult.category}`,
               description: prev.description || `Terdeteksi objek: ${allLabels}.\nMohon ditindaklanjuti.`,
               report_type: newType
           };
@@ -398,6 +401,21 @@ export default function ReportFormModal({
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+               <input
+                  type="checkbox"
+                  id="modal_is_valuable"
+                  checked={formData.is_valuable}
+                  onChange={(e) =>
+                    setFormData({ ...formData, is_valuable: e.target.checked })
+                  }
+                  className="rounded"
+                />
+                <Label htmlFor="modal_is_valuable" className="font-medium cursor-pointer">
+                  Sampah Bernilai Ekonomis (Misal: Botol Plastik)
+                </Label>
             </div>
 
             <div>
