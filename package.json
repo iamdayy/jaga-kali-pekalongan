@@ -90,6 +90,12 @@
     "overrides": {
       "react": "19.2.0",
       "react-dom": "19.2.0"
-    }
+    },
+    "onlyBuiltDependencies": [
+      "@tensorflow/tfjs-node",
+      "core-js",
+      "protobufjs",
+      "sharp"
+    ]
   }
 }
