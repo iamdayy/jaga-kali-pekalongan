@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-    serverExternalPackages: ['onnxruntime-node'],
+    serverExternalPackages: ['onnxruntime-node', '@xenova/transformers', 'jimp', 'sharp'],
     images: {
         remotePatterns: [
             {

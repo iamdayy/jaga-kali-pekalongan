@@ -5,6 +5,9 @@ import { env, pipeline, RawImage } from '@xenova/transformers';
 import { Jimp } from 'jimp';
 import { NextRequest, NextResponse } from "next/server";
 
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
+
 // --- KONFIGURASI ---
 // Matikan download model lokal Transformers jika di environment serverless
 env.allowLocalModels = false;
