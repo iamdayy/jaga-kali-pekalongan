@@ -59,6 +59,7 @@
     "lucide-react": "^0.454.0",
     "next": "16.0.10",
     "next-themes": "latest",
+    "onnxruntime-node": "^1.14.0",
     "pngjs": "^7.0.0",
     "react": "19.2.0",
     "react-countup": "^6.5.3",
@@ -93,7 +94,8 @@
     "onlyBuiltDependencies": [
       "core-js",
       "protobufjs",
-      "sharp"
+      "sharp",
+      "onnxruntime-node"
     ]
   }
 }
