@@ -21,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useImageClassifier } from "@/hooks/use-image-classifier";
 import { translateLabel } from "@/lib/translations";
 import { uploadImage } from "@/lib/upload-image";
+import { CategorySuggestion, ClassifyResponse, WasteDetection } from "@/types";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { ImageIcon, Loader, MapPin, X } from "lucide-react";
@@ -49,6 +50,16 @@ interface FormData {
   is_anonymous: boolean;
   is_valuable: boolean;
   image_urls: string[];
+}
+
+interface UploadedImage {
+  id: string;
+  file: File;
+  preview: string;
+  width: number;
+  height: number;
+  detections: WasteDetection[];
+  isAnalyzing: boolean;
 }
 
 export default function ReportFormModal({
@@ -80,11 +91,10 @@ export default function ReportFormModal({
   const [showMap, setShowMap] = useState(false);
   
   // Image handling state
-  const [imagePreview, setImagePreview] = useState<string[]>([]);
-  const [filesToUpload, setFilesToUpload] = useState<File[]>([]);
+  const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { isAnalyzing, categorySuggestion, analyzeImage } = useImageClassifier();
+  const { analyzeImage } = useImageClassifier();
   const [aiTags, setAiTags] = useState<string[]>([]);
 
   const mapRef = useRef<L.Map | null>(null);
@@ -109,8 +119,7 @@ export default function ReportFormModal({
     });
     setSuccess(false);
     setShowMap(false);
-    setImagePreview([]);
-    setFilesToUpload([]);
+    setUploadedImages([]);
     if (mapRef.current) {
       mapRef.current.remove();
       mapRef.current = null;
@@ -158,56 +167,14 @@ export default function ReportFormModal({
     mapRef.current = map;
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-
-    Array.from(files).forEach((file) => {
-      setFilesToUpload((prev) => [...prev, file]);
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const base64 = event.target?.result as string;
-        setImagePreview((prev) => [...prev, base64]);
-      };
-      reader.readAsDataURL(file);
-    });
-  };
-
-  const removeImage = (index: number) => {
-    setImagePreview((prev) => prev.filter((_, i) => i !== index));
-    setFilesToUpload((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  // Auto-fetch location on open if needed
-  useEffect(() => {
-    if (isOpen && !latitude && !longitude && "geolocation" in navigator) {
-         navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setFormData((prev) => ({
-            ...prev,
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          }));
-        },
-        (error) => console.warn("Location error:", error)
-      );
-    }
-  }, [isOpen, latitude, longitude]);
-
-  const handleImageAnalysis = async (file: File) => {
-    // Optional: Pass config here if we want to switch models dynamically
-    const results = await analyzeImage(file); // Cast to any to access custom properties like .color
-    
+  const updateFormFromAnalysis = (results: ClassifyResponse) => {
     if (results && results.suggestions.length > 0) {
       const topResult = results.suggestions[0];
-      const colorAnalysis = results.details?.water?.colorHex;
+      const colorAnalysis = results.details?.water?.hex;
       
-      // Translate labels for UI
-      const translatedTags = results.suggestions.map((r: any) => translateLabel(r.label));
+      const translatedTags = results.suggestions.map((r: CategorySuggestion) => translateLabel(r.category));
       
-      // Auto-fill form fields
       setFormData(prev => {
-          // 1. Determine Type & Severity
           let newType = prev.report_type;
           let newSeverity = "medium";
           let detectedCondition = "";
@@ -215,11 +182,6 @@ export default function ReportFormModal({
           const lowerLabel = topResult.category.toLowerCase();
           const translatedLower = translateLabel(topResult.category).toLowerCase();
           const pLabel = (k: string) => lowerLabel.includes(k) || translatedLower.includes(k);
-
-          // Water Context Check
-          const isWaterContext = ["lake", "river", "dam", "seashore", "water", "fountain", "cliff", "danau", "sungai", "pantai", "air"].some(pLabel);
-          console.log("isWaterContext", isWaterContext);
-          console.log("colorAnalysis", colorAnalysis);
 
           // Standard Object Detection
           if (["plastic", "bottle", "bag", "cup", "container", "plastik", "botol", "kantong"].some(pLabel)) {
@@ -232,7 +194,7 @@ export default function ReportFormModal({
           }
           else if (["battery", "chemical", "toxic", "medical", "baterai", "kimia", "racun", "limbah", "obat"].some(pLabel)) {
               newType = "hazardous";
-              newSeverity = "high"; // Hazardous is always high priority
+              newSeverity = "high";
           }
           else if (["paper", "cardboard", "wood", "textile", "cloth", "kertas", "kardus", "kayu", "kain"].some(pLabel)) {
               newType = "waste";
@@ -242,16 +204,46 @@ export default function ReportFormModal({
                newType = "waste";
                newSeverity = "medium";
           }
-          // Pollution Detection via Color (if Water Context OR No Specific Object)
-          
 
-          // 2. Generate Smart Title
+
+          // Pollution Detection via Color
+          if (colorAnalysis) {
+             const hex = colorAnalysis.replace('#', '');
+             const r = parseInt(hex.substring(0, 2), 16);
+             const g = parseInt(hex.substring(2, 4), 16);
+             const b = parseInt(hex.substring(4, 6), 16);
+             
+             // Brightness (Luma)
+             const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+
+             if (brightness < 75) {
+                 console.log("Air Keruh/Gelap");
+                 detectedCondition = "Air Keruh/Gelap";
+                 newSeverity = "high";
+             } else if (g > r + 20 && g > b + 20) {
+                  console.log("Air Berlumut/Hijau");
+                  detectedCondition = "Air Berlumut/Hijau";
+                  newSeverity = "medium";
+             } else if (r > g + 30 && r > b + 30) { // Brownish/Reddish
+                  console.log("Air Keruh (Kecoklatan)");
+                  detectedCondition = "Air Keruh (Kecoklatan)";
+                  newSeverity = "high";
+             } else {
+                  // Assume clearer or bluish
+                  if (!newSeverity || newSeverity === "medium") {
+                      console.log("Air Jernih");
+                      detectedCondition = "Air Jernih";
+                      newSeverity = "low";
+                  }
+             }
+          }
+
           const categoryName = translateLabel(topResult.category);
           const timeString = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
           
           let generatedTitle = `Laporan ${categoryName} (${timeString})`;
           if (detectedCondition) {
-              generatedTitle = `Laporan ${detectedCondition} (${timeString})`;
+              generatedTitle = `Laporan ${detectedCondition} - ${categoryName} (${timeString})`;
           }
 
           // 3. Generate Detailed Description
@@ -259,11 +251,9 @@ export default function ReportFormModal({
           const urgencyText = newSeverity === 'high' ? "SANGAT MENDESAK" : newSeverity === 'medium' ? "Perlu perhatian" : "Dapat ditangani rutin";
           
           let generatedDesc = `Terdeteksi objek: ${tagsString}.\n`;
-          
           if (detectedCondition) {
-              //  generatedDesc += `Kondisi Air: ${detectedCondition} (Dominan Warna RGB: ${colorAnalysis?.r},${colorAnalysis?.g},${colorAnalysis?.b}).\n`;
+             generatedDesc += `Kondisi Air: ${detectedCondition} (Hex: ${colorAnalysis}).\n`;
           }
-          
           generatedDesc += `Kategori: ${newType.toUpperCase()}.\n` +
                            `Tingkat Urgensi: ${urgencyText}.\n` +
                            `Mohon segera ditindaklanjuti tim terkait.`;
@@ -276,11 +266,66 @@ export default function ReportFormModal({
               severity: newSeverity
           };
       });
-      
       setAiTags(translatedTags);
     }
   };
 
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const base64 = event.target?.result as string;
+        
+        const img = new Image();
+        img.onload = async () => {
+             const newId = Math.random().toString(36).substr(2, 9);
+             setUploadedImages(prev => [...prev, {
+                 id: newId,
+                 file,
+                 preview: base64,
+                 width: img.width,
+                 height: img.height,
+                 detections: [],
+                 isAnalyzing: true
+             }]);
+
+             try {
+                const results = await analyzeImage(file);
+                
+                setUploadedImages(prev => prev.map(item => {
+                    if (item.id === newId) {
+                        return {
+                            ...item,
+                            detections: results?.details?.objects || [],
+                            isAnalyzing: false
+                        };
+                    }
+                    return item;
+                }));
+
+                if (results) {
+                    updateFormFromAnalysis(results);
+                }
+             } catch (err) {
+                 console.error("Analysis error", err);
+                 setUploadedImages(prev => prev.map(item => 
+                    item.id === newId ? { ...item, isAnalyzing: false } : item
+                 ));
+             }
+        };
+        img.src = base64;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeImage = (id: string) => {
+    setUploadedImages((prev) => prev.filter((img) => img.id !== id));
+  };
+    
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -300,12 +345,14 @@ export default function ReportFormModal({
     try {
       // 1. Upload images
       let uploadedUrls: string[] = [];
-      if (filesToUpload.length > 0) {
-        const uploadPromises = filesToUpload.map(file => uploadImage(file));
+      const imagesToUpload = uploadedImages.map(img => img.file);
+      
+      if (imagesToUpload.length > 0) {
+        const uploadPromises = imagesToUpload.map(file => uploadImage(file));
         const results = await Promise.all(uploadPromises);
         uploadedUrls = results.filter((url): url is string => url !== null);
         
-        if (uploadedUrls.length !== filesToUpload.length) {
+        if (uploadedUrls.length !== imagesToUpload.length) {
            console.warn("Beberapa gambar gagal diupload");
         }
       }
@@ -338,6 +385,22 @@ export default function ReportFormModal({
       setLoading(false);
     }
   };
+
+  // Auto-fetch location on open if needed
+  useEffect(() => {
+    if (isOpen && !latitude && !longitude && "geolocation" in navigator) {
+         navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setFormData((prev) => ({
+            ...prev,
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          }));
+        },
+        (error) => console.warn("Location error:", error)
+      );
+    }
+  }, [isOpen, latitude, longitude]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -412,53 +475,82 @@ export default function ReportFormModal({
                   Format: JPG, PNG. Maks 3 foto.
                 </p>
               </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  handlePhotoUpload(e);
-                  const files = e.target.files;
-                  if (files && files[0]) {
-                    handleImageAnalysis(files[0]);
-                  }
-                }}
-                disabled={imagePreview.length >= 3}
-              />
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*"
+            className="hidden"
+            onChange={handlePhotoUpload}
+            disabled={uploadedImages.length >= 3}
+          />
 
-              {imagePreview.length > 0 && (
-                <div className="mt-4 grid grid-cols-3 gap-3">
-                  {imagePreview.map((preview, idx) => (
-                    <div key={idx} className="relative group">
-                      <img
-                        src={preview || "/placeholder.svg"}
-                        alt={`Preview ${idx + 1}`}
-                        className="w-full h-24 object-cover rounded-lg border border-border"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => removeImage(idx)}
-                        className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                      {isAnalyzing && (
-                        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
-                          <Loader className="w-6 h-6 text-white animate-spin" />
-                        </div>
-                      )}
-                      {categorySuggestion.length > 0 && !isAnalyzing && (
-                        <div className="absolute bottom-1 right-1 bg-blue-600 text-white text-xs px-2 py-1 rounded">
-                          Category:{" "}
-                          {categorySuggestion[0].label} ({categorySuggestion[0].score}%)
-                        </div>
-                      )}
+          {uploadedImages.length > 0 && (
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {uploadedImages.map((img, idx) => (
+                <div key={img.id} className="relative group border border-border rounded-lg overflow-hidden bg-black/5">
+                  <div className="relative">
+                    <img
+                      src={img.preview || "/placeholder.svg"}
+                      alt={`Preview ${idx + 1}`}
+                      className="w-full h-48 object-contain"
+                    />
+                    
+                    {img.detections.length > 0 && (
+                        <svg 
+                            className="absolute inset-0 w-full h-full pointer-events-none"
+                            viewBox={`0 0 ${img.width} ${img.height}`}
+                            preserveAspectRatio="xMidYMid meet"
+                        >
+                            {img.detections.map((det, i) => {
+                                if (det.polygon && det.polygon.length > 0) {
+                                  const points = det.polygon.map(p => p.join(",")).join(" ");
+                                  return (
+                                    <polygon
+                                        key={i}
+                                        points={points}
+                                        fill="rgba(20, 184, 166, 0.3)" // Teal transparent
+                                        stroke="#0d9488" // Teal 600
+                                        strokeWidth="2"
+                                    />
+                                  );
+                                }
+                                return null;
+                            })}
+                        </svg>
+                    )}
+                  </div>
+
+                  {img.detections.length > 0 && (
+                     <div className="absolute bottom-2 left-2 right-2 flex flex-wrap gap-1 pointer-events-none">
+                         {img.detections.map((d, i) => (
+                             <span key={i} className="bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded backdrop-blur-sm">
+                                 {d.label || d.category || "Object"} ({Math.round((d.confidence || d.score || 0) * 100)}%)
+                             </span>
+                         ))}
+                     </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => removeImage(img.id)}
+                    className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 opacity-100 hover:bg-red-700 transition-colors z-10"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+
+                  {img.isAnalyzing && (
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-20">
+                      <div className="text-center">
+                          <Loader className="w-8 h-8 text-white animate-spin mx-auto mb-2" />
+                          <p className="text-white text-xs font-medium">Menganalisis...</p>
+                      </div>
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
+              ))}
+            </div>
+          )}
             </div>
 
             {/* 2. Informasi Dasar */}

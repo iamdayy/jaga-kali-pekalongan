@@ -1,23 +1,27 @@
 export interface WaterAnalysis {
-    found: boolean;
-    colorHex: string;
+    hex: string;
     condition: string;
-    confidence: number;
 }
 
 export interface WasteDetection {
-    label: string;
-    score: number;
-    box: any;
+    label?: string; // Legacy/frontend mapped
+    category: string; // API raw
+    score?: number; // Legacy/frontend mapped
+    confidence?: number; // API raw
+    box: number[];
+    polygon: number[][];
+}
+export interface CategorySuggestion {
+    category: string;
+    confidence: number;
+}
+
+export interface AnalysisDetails {
+    water: WaterAnalysis;
+    objects: WasteDetection[];
 }
 
 export interface ClassifyResponse {
-    suggestions: Array<{
-        category: string;
-        confidence: number;
-    }>;
-    details: {
-        water: WaterAnalysis;
-        waste: WasteDetection[];
-    };
+    suggestions: CategorySuggestion[];
+    details: AnalysisDetails;
 }
