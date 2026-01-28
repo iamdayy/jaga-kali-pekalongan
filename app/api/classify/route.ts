@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
         
         // Kirim request ke Python Backend (running di localhost:8000)
         // Pastikan URL ini sesuai dengan tempat Anda menjalankan Python
-        const pythonResponse = await fetch("http://127.0.0.1:8000/predict", {
+        const pythonResponse = await fetch(`${process.env.NEXT_PUBLIC_AI_API_URL}/predict`, {
             method: "POST",
             body: formData, 
             // Fetch otomatis mengatur Content-Type untuk FormData
