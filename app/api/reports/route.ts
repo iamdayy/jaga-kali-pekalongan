@@ -1,11 +1,11 @@
-import { createClient } from "@/lib/supabase/server"
+import { db } from "@/lib/db"
+import { reports } from "@/lib/schema"
 import { reportSchema } from "@/lib/validations/report"
+import { desc, eq, and } from "drizzle-orm"
 import { type NextRequest, NextResponse } from "next/server"
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = await createClient()
-
     const { searchParams } = new URL(request.url)
     const reportType = searchParams.get("type")
     const severity = searchParams.get("severity")
@@ -13,34 +13,43 @@ export async function GET(request: NextRequest) {
     const mode = searchParams.get("mode")
 
     // Optimize select based on mode
-    let selectFields = "*"
+    let columns = undefined
     if (mode === "map") {
-      // Exclude user PII and heavy fields if not needed
-      // We still need description for the popup, but maybe we'll handle truncation on client
-      selectFields = "id, title, description, severity, status, report_type, latitude, longitude, address, confirmations_count, created_at"
+      columns = {
+        id: true,
+        title: true,
+        description: true,
+        severity: true,
+        status: true,
+        report_type: true,
+        latitude: true,
+        longitude: true,
+        address: true,
+        confirmations_count: true,
+        created_at: true,
+      }
     }
 
-    let query = supabase.from("reports").select(selectFields).order("created_at", { ascending: false })
+    let conditions = []
+    if (reportType) conditions.push(eq(reports.report_type, reportType))
+    if (severity) conditions.push(eq(reports.severity, severity))
+    if (status) conditions.push(eq(reports.status, status))
 
-    if (reportType) query = query.eq("report_type", reportType)
-    if (severity) query = query.eq("severity", severity)
-    if (status) query = query.eq("status", status)
-
-    const { data, error } = await query
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
+    const data = await db.query.reports.findMany({
+      columns: columns,
+      where: conditions.length > 0 ? and(...conditions) : undefined,
+      orderBy: [desc(reports.created_at)],
+    })
 
     return NextResponse.json(data)
   } catch (error) {
+    console.error(error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
     const body = await request.json()
 
     // Validate payload
@@ -52,14 +61,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { data, error } = await supabase.from("reports").insert([validation.data]).select()
+    const [data] = await db.insert(reports)
+      .values({
+        ...validation.data,
+        latitude: validation.data.latitude.toString(),
+        longitude: validation.data.longitude.toString(),
+      })
+      .returning()
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
-    return NextResponse.json(data[0], { status: 201 })
+    return NextResponse.json(data, { status: 201 })
   } catch (error) {
+    console.error(error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

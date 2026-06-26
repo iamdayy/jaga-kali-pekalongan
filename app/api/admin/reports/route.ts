@@ -1,5 +1,7 @@
 import { isAdminAuthenticated } from "@/lib/admin-auth"
-import { createClient } from "@/lib/supabase/server"
+import { db } from "@/lib/db"
+import { admin_logs, reports } from "@/lib/schema"
+import { desc, eq, gte, lte, and } from "drizzle-orm"
 import { type NextRequest, NextResponse } from "next/server"
 
 export async function GET(request: NextRequest) {
@@ -8,7 +10,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const supabase = await createClient()
     const { searchParams } = new URL(request.url)
 
     const status = searchParams.get("status")
@@ -17,30 +18,35 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get("startDate")
     const endDate = searchParams.get("endDate")
 
-    let query = supabase
-      .from("reports")
-      .select("*, admin_logs:admin_logs(action, admin_user, created_at)")
-      .order("created_at", { ascending: false })
-
-    if (status) query = query.eq("status", status)
-    if (type) query = query.eq("report_type", type)
-    if (severity) query = query.eq("severity", severity)
-
+    let conditions = []
+    if (status) conditions.push(eq(reports.status, status))
+    if (type) conditions.push(eq(reports.report_type, type))
+    if (severity) conditions.push(eq(reports.severity, severity))
+    
     if (startDate) {
-      query = query.gte("created_at", startDate)
+      conditions.push(gte(reports.created_at, new Date(startDate)))
     }
     if (endDate) {
-      query = query.lte("created_at", endDate)
+      conditions.push(lte(reports.created_at, new Date(endDate)))
     }
 
-    const { data, error } = await query
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
+    const data = await db.query.reports.findMany({
+      where: conditions.length > 0 ? and(...conditions) : undefined,
+      orderBy: [desc(reports.created_at)],
+      with: {
+        admin_logs: {
+          columns: {
+            action: true,
+            admin_user: true,
+            created_at: true,
+          }
+        }
+      }
+    })
+    
     return NextResponse.json(data)
   } catch (error) {
+    console.error(error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
@@ -51,18 +57,20 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     } 
 
-    const supabase = await createClient()
     const body = await request.json()
     const { reportId, updates } = body
 
-    const { data, error } = await supabase.from("reports").update(updates).eq("id", reportId).select().single()
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
+    const [data] = await db.update(reports)
+      .set({
+        ...updates,
+        updated_at: new Date()
+      })
+      .where(eq(reports.id, reportId))
+      .returning()
 
     return NextResponse.json(data)
   } catch (error) {
+    console.error(error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

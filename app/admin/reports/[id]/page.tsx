@@ -369,7 +369,9 @@ export default function AdminReportEditorPage() {
                                       try {
                                         const uploaded: string[] = [];
                                         for (let i = 0; i < e.target.files.length; i++) {
-                                          const url = await uploadImage(e.target.files[i]);
+                                          const fd = new FormData();
+                                          fd.append("file", e.target.files[i]);
+                                          const url = await uploadImage(fd);
                                           if (url) uploaded.push(url);
                                         }
 

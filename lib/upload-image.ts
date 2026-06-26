@@ -1,26 +1,32 @@
-import { createClient } from "./supabase/client";
+"use server";
 
-export async function uploadImage(file: File): Promise<string | null> {
-  const supabase = createClient();
+import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { r2Client } from "./r2";
+
+export async function uploadImage(formData: FormData): Promise<string | null> {
+  const file = formData.get("file") as File;
+  if (!file) return null;
+
   const fileExt = file.name.split(".").pop();
   const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-  const filePath = `${fileName}`;
+  const filePath = `report-images/${fileName}`;
 
   try {
-    const { error: uploadError } = await supabase.storage
-      .from("report-images")
-      .upload(filePath, file);
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
 
-    if (uploadError) {
-      console.error("Error uploading image:", uploadError);
-      return null;
-    }
+    const command = new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: filePath,
+      Body: buffer,
+      ContentType: file.type,
+    });
 
-    const { data } = supabase.storage
-      .from("report-images")
-      .getPublicUrl(filePath);
+    await r2Client.send(command);
 
-    return data.publicUrl;
+    // Return the public URL
+    const publicUrl = process.env.R2_PUBLIC_URL;
+    return `${publicUrl}/${filePath}`;
   } catch (error) {
     console.error("Unexpected error uploading image:", error);
     return null;

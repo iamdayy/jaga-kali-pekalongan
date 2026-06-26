@@ -364,7 +364,11 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
       const imagesToUpload = uploadedImages.map(img => img.file);
       
       if (imagesToUpload.length > 0) {
-        const uploadPromises = imagesToUpload.map(file => uploadImage(file));
+        const uploadPromises = imagesToUpload.map(file => {
+          const fd = new FormData();
+          fd.append("file", file);
+          return uploadImage(fd);
+        });
         const results = await Promise.all(uploadPromises);
         
         // Filter yang berhasil (tidak null)

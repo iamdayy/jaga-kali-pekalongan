@@ -1,26 +1,30 @@
-import { createClient } from "@/lib/supabase/server"
+import { db } from "@/lib/db"
+import { confirmations, reports } from "@/lib/schema"
+import { eq, sql } from "drizzle-orm"
 import { type NextRequest, NextResponse } from "next/server"
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
     const body = await request.json()
 
-    const { data, error } = await supabase.from("confirmations").insert([body]).select()
+    // Insert confirmation
+    const [data] = await db.insert(confirmations)
+      .values({
+        report_id: body.report_id,
+        user_identifier: body.user_identifier,
+      })
+      .returning()
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
+    // Increment confirmations count in reports table atomically
+    await db.update(reports)
+      .set({
+        confirmations_count: sql`${reports.confirmations_count} + 1`
+      })
+      .where(eq(reports.id, body.report_id))
 
-    // Increment confirmations count in reports table
-    const reportId = body.report_id
-    await supabase
-      .from("reports")
-      .update({ confirmations_count: supabase.rpc("increment_confirmations", { report_id: reportId }) })
-      .eq("id", reportId)
-
-    return NextResponse.json(data[0], { status: 201 })
+    return NextResponse.json(data, { status: 201 })
   } catch (error) {
+    console.error(error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
