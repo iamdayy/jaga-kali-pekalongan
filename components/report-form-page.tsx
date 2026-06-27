@@ -82,7 +82,7 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
   const markerRef = useRef<L.Marker | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { analyzeImage } = useImageClassifier();
+  const { analyzeImage, isModelReady } = useImageClassifier();
   const [aiTags, setAiTags] = useState<string[]>([]);
 
   useEffect(() => {
@@ -480,16 +480,30 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
             Foto Bukti (Optional)
           </Label>
           <div
-            className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-teal-600 transition-colors"
-            onClick={() => fileInputRef.current?.click()}
+            className={`border-2 border-dashed border-border rounded-lg p-6 text-center transition-colors ${!isModelReady ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:border-teal-600"}`}
+            onClick={() => isModelReady && fileInputRef.current?.click()}
           >
-            <ImageIcon className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm font-medium text-foreground">
-              Klik untuk upload foto
-            </p>
-            <p className="text-xs text-muted-foreground">
-              PNG, JPG hingga 5MB per foto (Maks 3 foto)
-            </p>
+            {isModelReady ? (
+              <>
+                <ImageIcon className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                <p className="text-sm font-medium text-foreground">
+                  Klik untuk upload foto
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  PNG, JPG hingga 5MB per foto (Maks 3 foto)
+                </p>
+              </>
+            ) : (
+              <>
+                <Loader className="w-8 h-8 text-teal-600 animate-spin mx-auto mb-2" />
+                <p className="text-sm font-medium text-foreground">
+                  Sedang memuat AI Model...
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Mohon tunggu beberapa saat sebelum mengunggah foto.
+                </p>
+              </>
+            )}
           </div>
           <input
             ref={fileInputRef}
@@ -533,7 +547,22 @@ export default function ReportFormPage({ onSuccess }: ReportFormPageProps) {
                                     />
                                   );
                                 }
-                                // Fallback to Box if no polygon (optional, or draw both)
+                                // Fallback to Box if no polygon
+                                if (det.box && det.box.length === 4) {
+                                  const [x1, y1, x2, y2] = det.box;
+                                  return (
+                                    <rect
+                                        key={i}
+                                        x={x1}
+                                        y={y1}
+                                        width={x2 - x1}
+                                        height={y2 - y1}
+                                        fill="rgba(20, 184, 166, 0.3)"
+                                        stroke="#0d9488"
+                                        strokeWidth="2"
+                                    />
+                                  );
+                                }
                                 return null;
                             })}
                         </svg>
